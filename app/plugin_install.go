@@ -17,6 +17,9 @@ import (
 	"github.com/mattermost/mattermost-server/utils"
 )
 
+const managedPluginFileName = ".filestore"
+const fileStorePluginFolder = "./plugins"
+
 func (a *App) InstallPluginFromData(data model.PluginEventData) {
 	mlog.Info(fmt.Sprintf("InstallPluginFromData. ID: %v, Path: %v", data.Id, data.FileStorePath))
 }
@@ -31,6 +34,22 @@ func (a *App) InstallPlugin(pluginFile io.ReadSeeker, replace bool) (*model.Mani
 }
 
 func (a *App) installPlugin(pluginFile io.ReadSeeker, replace bool) (*model.Manifest, *model.AppError) {
+	manifest, installErr := a.installPluginLocally(pluginFile, replace)
+	if installErr != nil {
+		return nil, installErr
+	}
+
+	// Store bundle in the file store to allow access from other servers.
+	pluginFile.Seek(0, 0)
+
+	if _, err := a.WriteFile(pluginFile, a.getBundleStorePath(manifest.Id)); err != nil {
+		return nil, model.NewAppError("uploadPlugin", "app.plugin.store_bundle.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return manifest, nil
+}
+
+func (a *App) installPluginLocally(pluginFile io.ReadSeeker, replace bool) (*model.Manifest, *model.AppError) {
 	pluginsEnvironment := a.GetPluginsEnvironment()
 	if pluginsEnvironment == nil {
 		return nil, model.NewAppError("installPlugin", "app.plugin.disabled.app_error", nil, "", http.StatusNotImplemented)
@@ -80,7 +99,7 @@ func (a *App) installPlugin(pluginFile io.ReadSeeker, replace bool) (*model.Mani
 				return nil, model.NewAppError("installPlugin", "app.plugin.install_id.app_error", nil, "", http.StatusBadRequest)
 			}
 
-			if err := a.RemovePlugin(manifest.Id); err != nil {
+			if err := a.removePluginLocally(manifest.Id); err != nil {
 				return nil, model.NewAppError("installPlugin", "app.plugin.install_id_failed_remove.app_error", nil, "", http.StatusBadRequest)
 			}
 		}
@@ -92,13 +111,12 @@ func (a *App) installPlugin(pluginFile io.ReadSeeker, replace bool) (*model.Mani
 		return nil, model.NewAppError("installPlugin", "app.plugin.mvdir.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	// Store bundle in the file store to allow access from other servers.
-	pluginFile.Seek(0, 0)
-
-	storePluginFileName := filepath.Join("./plugins", manifest.Id) + ".tar.gz"
-	if _, err := a.WriteFile(pluginFile, storePluginFileName); err != nil {
-		return nil, model.NewAppError("uploadPlugin", "app.plugin.store_bundle.app_error", nil, err.Error(), http.StatusInternalServerError)
+	// Flag plugin locally as managed by the filestore.
+	f, createErr := os.Create(filepath.Join(pluginPath, managedPluginFileName))
+	if createErr != nil {
+		return nil, model.NewAppError("uploadPlugin", "app.plugin.flag_managed.app_error", nil, createErr.Error(), http.StatusInternalServerError)
 	}
+	f.Close()
 
 	if stashed != nil && stashed.Enable {
 		a.EnablePlugin(manifest.Id)
@@ -124,6 +142,28 @@ func (a *App) RemovePlugin(id string) *model.AppError {
 }
 
 func (a *App) removePlugin(id string) *model.AppError {
+	if err := a.removePluginLocally(id); err != nil {
+		return err
+	}
+
+	// Remove bundle from the file store.
+	storePluginFileName := a.getBundleStorePath(id)
+	bundleExist, err := a.FileExists(storePluginFileName)
+	if err != nil {
+		return model.NewAppError("removePlugin", "app.plugin.remove_bundle.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	if !bundleExist {
+		return nil
+	}
+	if err := a.RemoveFile(storePluginFileName); err != nil {
+		return model.NewAppError("removePlugin", "app.plugin.remove_bundle.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return nil
+}
+
+func (a *App) removePluginLocally(id string) *model.AppError {
 	pluginsEnvironment := a.GetPluginsEnvironment()
 	if pluginsEnvironment == nil {
 		return model.NewAppError("removePlugin", "app.plugin.disabled.app_error", nil, "", http.StatusNotImplemented)
@@ -185,4 +225,8 @@ func (a *App) removePlugin(id string) *model.AppError {
 	}
 
 	return nil
+}
+
+func (a *App) getBundleStorePath(id string) string {
+	return filepath.Join(fileStorePluginFolder, fmt.Sprintf("%s.tar.gz", id))
 }

@@ -122,6 +122,15 @@ func (a *App) RemoveFile(path string) *model.AppError {
 	return backend.RemoveFile(path)
 }
 
+func (a *App) ListDirectory(path string) ([]string, *model.AppError) {
+	backend, err := a.FileBackend()
+	if err != nil {
+		return nil, err
+	}
+	paths, err := backend.ListDirectory(path)
+	return *paths, err
+}
+
 func (a *App) GetInfoForFilename(post *model.Post, teamId string, filename string) *model.FileInfo {
 	// Find the path from the Filename of the form /{channelId}/{userId}/{uid}/{nameWithExtension}
 	split := strings.SplitN(filename, "/", 5)

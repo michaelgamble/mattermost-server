@@ -4,6 +4,7 @@
 package app
 
 import (
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-server/mlog"
 	"github.com/mattermost/mattermost-server/model"
 	"github.com/mattermost/mattermost-server/plugin"
+	"github.com/mattermost/mattermost-server/services/filesstore"
 	"github.com/mattermost/mattermost-server/utils/fileutils"
 )
 
@@ -146,6 +148,10 @@ func (a *App) InitPlugins(pluginDir, webappPluginDir string) {
 	}
 	a.SetPluginsEnvironment(env)
 
+	if err := a.SyncPlugins(); err != nil {
+		mlog.Error("Failed to sync plugins with filestore", mlog.Err(err))
+	}
+
 	prepackagedPluginsDir, found := fileutils.FindDir("prepackaged_plugins")
 	if found {
 		if err := filepath.Walk(prepackagedPluginsDir, func(walkPath string, info os.FileInfo, err error) error {
@@ -180,6 +186,71 @@ func (a *App) InitPlugins(pluginDir, webappPluginDir string) {
 	a.Srv.PluginsLock.Unlock()
 
 	a.SyncPluginsActiveState()
+}
+
+// SyncPlugins synchronizes the plugins installed locally
+// with the plugin bundles available in the file store.
+func (a *App) SyncPlugins() *model.AppError {
+	mlog.Info("Synching plugins with the file store")
+
+	pluginDirs, err := ioutil.ReadDir(*a.Config().PluginSettings.Directory)
+	if err != nil {
+		return model.NewAppError("SyncPlugins", "app.plugin.sync.read_local_folder.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	// Remove plugins locally to sync with file store.
+	for _, dir := range pluginDirs {
+		if !dir.IsDir() {
+			continue
+		}
+
+		// Only handle managed plugins with .filestore flag file.
+		_, err := os.Stat(filepath.Join(*a.Config().PluginSettings.Directory, dir.Name(), managedPluginFileName))
+		if os.IsNotExist(err) {
+			mlog.Warn("Found unmanaged plugin. Ignoring in plugin sync with the filestore.", mlog.String("plugin", dir.Name()))
+		} else if err != nil {
+			mlog.Error("Error reading local plugin directoy. Skipped for sync.", mlog.String("folder", dir.Name()), mlog.Err(err))
+		} else {
+			mlog.Debug("Plugin Sync Uninstalling plugin locally", mlog.String("plugin", dir.Name()))
+			if err := a.removePluginLocally(dir.Name()); err != nil {
+				mlog.Error("Error uninstalling managed plugin during sync.", mlog.String("plugin", dir.Name()), mlog.Err(err))
+			}
+		}
+	}
+
+	// Install plugins from the file store.
+	exists, appErr := a.FileExists(fileStorePluginFolder)
+	if appErr != nil {
+		return model.NewAppError("SyncPlugins", "app.plugin.sync.check_filestore.app_error", nil, appErr.Error(), http.StatusInternalServerError)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	fileStorePaths, appErr := a.ListDirectory(fileStorePluginFolder)
+	if appErr != nil {
+		return model.NewAppError("SyncPlugins", "app.plugin.sync.list_filestore.app_error", nil, appErr.Error(), http.StatusInternalServerError)
+	}
+
+	for _, path := range fileStorePaths {
+		if strings.HasSuffix(path, ".tar.gz") {
+			var reader filesstore.ReadCloseSeeker
+			reader, appErr = a.FileReader(filepath.Join("./", path))
+			if appErr != nil {
+				mlog.Error("Failed to open plugin bundle from filestore.", mlog.String("bundle", path), mlog.Err(appErr))
+				continue
+			}
+			defer reader.Close()
+
+			mlog.Debug("Plugin Sync installing plugin locally", mlog.String("plugin", path))
+			if _, err := a.installPluginLocally(reader, true); err != nil {
+				mlog.Error("Failed to unpack plugin from filestore", mlog.Err(err), mlog.String("path", path))
+			}
+		}
+	}
+
+	return nil
 }
 
 func (a *App) ShutDownPlugins() {
