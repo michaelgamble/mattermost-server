@@ -5,8 +5,8 @@
 package mocks
 
 import (
-	model "github.com/mattermost/mattermost-server/v5/model"
-	store "github.com/mattermost/mattermost-server/v5/store"
+	model "github.com/mattermost/mattermost-server/v6/model"
+	store "github.com/mattermost/mattermost-server/v6/store"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -64,6 +64,27 @@ func (_m *ThreadStore) DeleteMembershipForUser(userId string, postID string) err
 	}
 
 	return r0
+}
+
+// DeleteOrphanedRows provides a mock function with given fields: limit
+func (_m *ThreadStore) DeleteOrphanedRows(limit int) (int64, error) {
+	ret := _m.Called(limit)
+
+	var r0 int64
+	if rf, ok := ret.Get(0).(func(int) int64); ok {
+		r0 = rf(limit)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(int) error); ok {
+		r1 = rf(limit)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // Get provides a mock function with given fields: id
@@ -290,6 +311,62 @@ func (_m *ThreadStore) MarkAsRead(userID string, threadID string, timestamp int6
 	}
 
 	return r0
+}
+
+// PermanentDeleteBatchForRetentionPolicies provides a mock function with given fields: now, globalPolicyEndTime, limit, cursor
+func (_m *ThreadStore) PermanentDeleteBatchForRetentionPolicies(now int64, globalPolicyEndTime int64, limit int64, cursor model.RetentionPolicyCursor) (int64, model.RetentionPolicyCursor, error) {
+	ret := _m.Called(now, globalPolicyEndTime, limit, cursor)
+
+	var r0 int64
+	if rf, ok := ret.Get(0).(func(int64, int64, int64, model.RetentionPolicyCursor) int64); ok {
+		r0 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	var r1 model.RetentionPolicyCursor
+	if rf, ok := ret.Get(1).(func(int64, int64, int64, model.RetentionPolicyCursor) model.RetentionPolicyCursor); ok {
+		r1 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r1 = ret.Get(1).(model.RetentionPolicyCursor)
+	}
+
+	var r2 error
+	if rf, ok := ret.Get(2).(func(int64, int64, int64, model.RetentionPolicyCursor) error); ok {
+		r2 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// PermanentDeleteBatchThreadMembershipsForRetentionPolicies provides a mock function with given fields: now, globalPolicyEndTime, limit, cursor
+func (_m *ThreadStore) PermanentDeleteBatchThreadMembershipsForRetentionPolicies(now int64, globalPolicyEndTime int64, limit int64, cursor model.RetentionPolicyCursor) (int64, model.RetentionPolicyCursor, error) {
+	ret := _m.Called(now, globalPolicyEndTime, limit, cursor)
+
+	var r0 int64
+	if rf, ok := ret.Get(0).(func(int64, int64, int64, model.RetentionPolicyCursor) int64); ok {
+		r0 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	var r1 model.RetentionPolicyCursor
+	if rf, ok := ret.Get(1).(func(int64, int64, int64, model.RetentionPolicyCursor) model.RetentionPolicyCursor); ok {
+		r1 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r1 = ret.Get(1).(model.RetentionPolicyCursor)
+	}
+
+	var r2 error
+	if rf, ok := ret.Get(2).(func(int64, int64, int64, model.RetentionPolicyCursor) error); ok {
+		r2 = rf(now, globalPolicyEndTime, limit, cursor)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // Save provides a mock function with given fields: thread

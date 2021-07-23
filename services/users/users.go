@@ -5,77 +5,19 @@ package users
 
 import (
 	"context"
-	"errors"
+	"encoding/base64"
 	"fmt"
-	"runtime"
-	"sync"
 
-	"github.com/mattermost/mattermost-server/v5/einterfaces"
-	"github.com/mattermost/mattermost-server/v5/model"
-	"github.com/mattermost/mattermost-server/v5/services/cache"
-	"github.com/mattermost/mattermost-server/v5/shared/i18n"
-	"github.com/mattermost/mattermost-server/v5/shared/mlog"
-	"github.com/mattermost/mattermost-server/v5/store"
+	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost-server/v6/shared/i18n"
+	"github.com/mattermost/mattermost-server/v6/shared/mfa"
+	"github.com/mattermost/mattermost-server/v6/shared/mlog"
+	"github.com/mattermost/mattermost-server/v6/store"
 )
-
-type UserService struct {
-	store        store.UserStore
-	sessionStore store.SessionStore
-	sessionCache cache.Cache
-	sessionPool  sync.Pool
-	metrics      einterfaces.MetricsInterface
-	cluster      einterfaces.ClusterInterface
-	config       func() *model.Config
-}
 
 type UserCreateOptions struct {
 	Guest      bool
 	FromImport bool
-}
-
-// ServiceInitializer is used to initialize the UserService.
-type ServiceInitializer struct {
-	// Mandatory fields
-	UserStore    store.UserStore
-	SessionStore store.SessionStore
-	ConfigFn     func() *model.Config
-	// Optional fields
-	Metrics einterfaces.MetricsInterface
-	Cluster einterfaces.ClusterInterface
-}
-
-func New(initializer ServiceInitializer) (*UserService, error) {
-	cacheProvider := cache.NewProvider()
-	if err := cacheProvider.Connect(); err != nil {
-		return nil, fmt.Errorf("could not create cache provider: %w", err)
-	}
-
-	sessionCache, err := cacheProvider.NewCache(&cache.CacheOptions{
-		Size:           model.SESSION_CACHE_SIZE,
-		Striped:        true,
-		StripedBuckets: maxInt(runtime.NumCPU()-1, 1),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("could not create session cache: %w", err)
-	}
-
-	if initializer.ConfigFn == nil || initializer.UserStore == nil || initializer.SessionStore == nil {
-		return nil, errors.New("required parameters are not provided")
-	}
-
-	return &UserService{
-		store:        initializer.UserStore,
-		sessionStore: initializer.SessionStore,
-		config:       initializer.ConfigFn,
-		metrics:      initializer.Metrics,
-		cluster:      initializer.Cluster,
-		sessionCache: sessionCache,
-		sessionPool: sync.Pool{
-			New: func() interface{} {
-				return &model.Session{}
-			},
-		},
-	}, nil
 }
 
 // CreateUser creates a user
@@ -84,9 +26,9 @@ func (us *UserService) CreateUser(user *model.User, opts UserCreateOptions) (*mo
 		return us.createUser(user)
 	}
 
-	user.Roles = model.SYSTEM_USER_ROLE_ID
+	user.Roles = model.SystemUserRoleId
 	if opts.Guest {
-		user.Roles = model.SYSTEM_GUEST_ROLE_ID
+		user.Roles = model.SystemGuestRoleId
 	}
 
 	if !user.IsLDAPUser() && !user.IsSAMLUser() && !user.IsGuest() && !CheckUserDomain(user, *us.config().TeamSettings.RestrictCreationToDomains) {
@@ -104,7 +46,7 @@ func (us *UserService) CreateUser(user *model.User, opts UserCreateOptions) (*mo
 		return nil, UserCountError
 	}
 	if count <= 0 {
-		user.Roles = model.SYSTEM_ADMIN_ROLE_ID + " " + model.SYSTEM_USER_ROLE_ID
+		user.Roles = model.SystemAdminRoleId + " " + model.SystemUserRoleId
 	}
 
 	if _, ok := i18n.GetSupportedLocales()[user.Locale]; !ok {
@@ -165,6 +107,10 @@ func (us *UserService) GetUserByAuth(authData *string, authService string) (*mod
 
 func (us *UserService) GetUsers(options *model.UserGetOptions) ([]*model.User, error) {
 	return us.store.GetAllProfiles(options)
+}
+
+func (us *UserService) GetUsersByUsernames(usernames []string, options *model.UserGetOptions) ([]*model.User, error) {
+	return us.store.GetProfilesByUsernames(usernames, options.ViewRestrictions)
 }
 
 func (us *UserService) GetUsersPage(options *model.UserGetOptions, asAdmin bool) ([]*model.User, error) {
@@ -243,16 +189,64 @@ func (us *UserService) GetUsersWithoutTeam(options *model.UserGetOptions) ([]*mo
 	return users, nil
 }
 
+func (us *UserService) UpdateUser(user *model.User, allowRoleUpdate bool) (*model.UserUpdate, error) {
+	return us.store.Update(user, allowRoleUpdate)
+}
+
+func (us *UserService) DeactivateAllGuests() ([]string, error) {
+	users, err := us.store.DeactivateGuests()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, userID := range users {
+		if err := us.RevokeAllSessions(userID); err != nil {
+			return nil, err
+		}
+	}
+
+	return users, nil
+}
+
 func (us *UserService) InvalidateCacheForUser(userID string) {
 	us.store.InvalidateProfilesInChannelCacheByUser(userID)
 	us.store.InvalidateProfileCacheForUser(userID)
 
 	if us.cluster != nil {
 		msg := &model.ClusterMessage{
-			Event:    model.CLUSTER_EVENT_INVALIDATE_CACHE_FOR_USER,
-			SendType: model.CLUSTER_SEND_BEST_EFFORT,
+			Event:    model.ClusterEventInvalidateCacheForUser,
+			SendType: model.ClusterSendBestEffort,
 			Data:     userID,
 		}
 		us.cluster.SendClusterMessage(msg)
 	}
+}
+
+func (us *UserService) GenerateMfaSecret(user *model.User) (*model.MfaSecret, error) {
+	secret, img, err := mfa.New(us.store).GenerateSecret(*us.config().ServiceSettings.SiteURL, user.Email, user.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Make sure the old secret is not cached on any cluster nodes.
+	us.InvalidateCacheForUser(user.Id)
+
+	mfaSecret := &model.MfaSecret{Secret: secret, QRCode: base64.StdEncoding.EncodeToString(img)}
+	return mfaSecret, nil
+}
+
+func (us *UserService) ActivateMfa(user *model.User, token string) error {
+	return mfa.New(us.store).Activate(user.MfaSecret, user.Id, token)
+}
+
+func (us *UserService) DeactivateMfa(user *model.User) error {
+	return mfa.New(us.store).Deactivate(user.Id)
+}
+
+func (us *UserService) PromoteGuestToUser(user *model.User) error {
+	return us.store.PromoteGuestToUser(user.Id)
+}
+
+func (us *UserService) DemoteUserToGuest(user *model.User) (*model.User, error) {
+	return us.store.DemoteUserToGuest(user.Id)
 }
