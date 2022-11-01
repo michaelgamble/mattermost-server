@@ -5,7 +5,6 @@ package api4
 
 import (
 	"io"
-	"io/ioutil"
 	"net/http"
 
 	"github.com/mattermost/mattermost-server/v6/audit"
@@ -13,9 +12,9 @@ import (
 )
 
 func (api *API) InitBrand() {
-	api.BaseRoutes.Brand.Handle("/image", api.ApiHandlerTrustRequester(getBrandImage)).Methods("GET")
-	api.BaseRoutes.Brand.Handle("/image", api.ApiSessionRequired(uploadBrandImage)).Methods("POST")
-	api.BaseRoutes.Brand.Handle("/image", api.ApiSessionRequired(deleteBrandImage)).Methods("DELETE")
+	api.BaseRoutes.Brand.Handle("/image", api.APIHandlerTrustRequester(getBrandImage)).Methods("GET")
+	api.BaseRoutes.Brand.Handle("/image", api.APISessionRequired(uploadBrandImage)).Methods("POST")
+	api.BaseRoutes.Brand.Handle("/image", api.APISessionRequired(deleteBrandImage)).Methods("DELETE")
 }
 
 func getBrandImage(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -33,7 +32,7 @@ func getBrandImage(c *Context, w http.ResponseWriter, r *http.Request) {
 }
 
 func uploadBrandImage(c *Context, w http.ResponseWriter, r *http.Request) {
-	defer io.Copy(ioutil.Discard, r.Body)
+	defer io.Copy(io.Discard, r.Body)
 
 	if r.ContentLength > *c.App.Config().FileSettings.MaxFileSize {
 		c.Err = model.NewAppError("uploadBrandImage", "api.admin.upload_brand_image.too_large.app_error", nil, "", http.StatusRequestEntityTooLarge)

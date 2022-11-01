@@ -4,13 +4,14 @@
 package api4
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/mattermost/mattermost-server/v6/model"
 )
 
 func (api *API) InitCluster() {
-	api.BaseRoutes.Cluster.Handle("/status", api.ApiSessionRequired(getClusterStatus)).Methods("GET")
+	api.BaseRoutes.Cluster.Handle("/status", api.APISessionRequired(getClusterStatus)).Methods("GET")
 }
 
 func getClusterStatus(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -25,5 +26,10 @@ func getClusterStatus(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	infos := c.App.GetClusterStatus()
-	w.Write([]byte(model.ClusterInfosToJson(infos)))
+	js, err := json.Marshal(infos)
+	if err != nil {
+		c.Err = model.NewAppError("getClusterStatus", "api.marshal_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+	w.Write(js)
 }

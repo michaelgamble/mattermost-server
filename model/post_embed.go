@@ -8,6 +8,8 @@ const (
 	PostEmbedMessageAttachment PostEmbedType = "message_attachment"
 	PostEmbedOpengraph         PostEmbedType = "opengraph"
 	PostEmbedLink              PostEmbedType = "link"
+	PostEmbedPermalink         PostEmbedType = "permalink"
+	PostEmbedBoards            PostEmbedType = "boards"
 )
 
 type PostEmbedType string
@@ -19,5 +21,5 @@ type PostEmbed struct {
 	URL string `json:"url,omitempty"`
 
 	// Any additional data for the embedded content. Only used for OpenGraph embeds.
-	Data interface{} `json:"data,omitempty"`
+	Data any `json:"data,omitempty"`
 }

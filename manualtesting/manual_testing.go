@@ -35,7 +35,7 @@ type TestEnvironment struct {
 
 // Init adds manualtest endpoint to the API.
 func Init(api4 *api4.API) {
-	api4.BaseRoutes.Root.Handle("/manualtest", api4.ApiHandler(manualTest)).Methods("GET")
+	api4.BaseRoutes.Root.Handle("/manualtest", api4.APIHandler(manualTest)).Methods("GET")
 }
 
 func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
@@ -78,17 +78,17 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 			Type:        model.TeamOpen,
 		}
 
-		createdTeam, err := c.App.Srv().Store.Team().Save(team)
+		createdTeam, err := c.App.Srv().Store().Team().Save(team)
 		if err != nil {
 			var invErr *store.ErrInvalidInput
 			var appErr *model.AppError
 			switch {
 			case errors.As(err, &invErr):
-				c.Err = model.NewAppError("manualTest", "app.team.save.existing.app_error", nil, invErr.Error(), http.StatusBadRequest)
+				c.Err = model.NewAppError("manualTest", "app.team.save.existing.app_error", nil, "", http.StatusBadRequest).Wrap(err)
 			case errors.As(err, &appErr):
 				c.Err = appErr
 			default:
-				c.Err = model.NewAppError("manualTest", "app.team.save.app_error", nil, err.Error(), http.StatusInternalServerError)
+				c.Err = model.NewAppError("manualTest", "app.team.save.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 			}
 			return
 		}
@@ -107,21 +107,34 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 			Nickname: username[0],
 			Password: slashcommands.UserPassword}
 
-		user, resp := client.CreateUser(user)
-		if resp.Error != nil {
-			c.Err = resp.Error
+		user, _, err = client.CreateUser(user)
+		if err != nil {
+			var appErr *model.AppError
+			ok = errors.As(err, &appErr)
+			if ok {
+				c.Err = appErr
+			} else {
+				c.Err = model.NewAppError("manualTest", "app.user.save.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+			}
+
 			return
 		}
 
-		c.App.Srv().Store.User().VerifyEmail(user.Id, user.Email)
-		c.App.Srv().Store.Team().SaveMember(&model.TeamMember{TeamId: teamID, UserId: user.Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam)
+		c.App.Srv().Store().User().VerifyEmail(user.Id, user.Email)
+		c.App.Srv().Store().Team().SaveMember(&model.TeamMember{TeamId: teamID, UserId: user.Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam)
 
 		userID = user.Id
 
 		// Login as user to generate auth token
-		_, resp = client.LoginById(user.Id, slashcommands.UserPassword)
-		if resp.Error != nil {
-			c.Err = resp.Error
+		_, _, err = client.LoginById(user.Id, slashcommands.UserPassword)
+		if err != nil {
+			var appErr *model.AppError
+			ok = errors.As(err, &appErr)
+			if ok {
+				c.Err = appErr
+			} else {
+				c.Err = model.NewAppError("manualTest", "api.user.login.bot_login_forbidden.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+			}
 			return
 		}
 
@@ -130,7 +143,7 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 			Name:     model.SessionCookieToken,
 			Value:    client.AuthToken,
 			Path:     "/",
-			MaxAge:   *c.App.Config().ServiceSettings.SessionLengthWebInDays * 60 * 60 * 24,
+			MaxAge:   *c.App.Config().ServiceSettings.SessionLengthWebInHours * 60 * 60,
 			HttpOnly: true,
 		}
 		http.SetCookie(w, sessionCookie)
@@ -165,17 +178,20 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 
 func getChannelID(a app.AppIface, channelname string, teamid string, userid string) (string, bool) {
 	// Grab all the channels
-	channels, err := a.Srv().Store.Channel().GetChannels(teamid, userid, false, 0)
+	channels, err := a.Srv().Store().Channel().GetChannels(teamid, userid, &model.ChannelSearchOpts{
+		IncludeDeleted: false,
+		LastDeleteAt:   0,
+	})
 	if err != nil {
 		mlog.Debug("Unable to get channels")
 		return "", false
 	}
 
-	for _, channel := range *channels {
+	for _, channel := range channels {
 		if channel.Name == channelname {
 			return channel.Id, true
 		}
 	}
-	mlog.Debug("Could not find channel", mlog.String("Channel name", channelname), mlog.Int("Possibilities searched", len(*channels)))
+	mlog.Debug("Could not find channel", mlog.String("Channel name", channelname), mlog.Int("Possibilities searched", len(channels)))
 	return "", false
 }

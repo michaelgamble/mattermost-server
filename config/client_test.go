@@ -112,37 +112,10 @@ func TestGetClientConfig(t *testing.T) {
 			},
 		},
 		{
-			"experimental channel organization enabled",
-			&model.Config{
-				ServiceSettings: model.ServiceSettings{
-					ExperimentalChannelOrganization: model.NewBool(true),
-				},
-			},
-			"tag1",
-			nil,
-			map[string]string{
-				"ExperimentalChannelOrganization": "true",
-			},
-		},
-		{
-			"experimental channel organization disabled, but experimental group unread channels on",
-			&model.Config{
-				ServiceSettings: model.ServiceSettings{
-					ExperimentalChannelOrganization: model.NewBool(false),
-					ExperimentalGroupUnreadChannels: model.NewString(model.GroupUnreadChannelsDefaultOn),
-				},
-			},
-			"tag1",
-			nil,
-			map[string]string{
-				"ExperimentalChannelOrganization": "true",
-			},
-		},
-		{
 			"default marketplace",
 			&model.Config{
 				PluginSettings: model.PluginSettings{
-					MarketplaceUrl: model.NewString(model.PluginSettingsDefaultMarketplaceUrl),
+					MarketplaceURL: model.NewString(model.PluginSettingsDefaultMarketplaceURL),
 				},
 			},
 			"tag1",
@@ -155,7 +128,7 @@ func TestGetClientConfig(t *testing.T) {
 			"non-default marketplace",
 			&model.Config{
 				PluginSettings: model.PluginSettings{
-					MarketplaceUrl: model.NewString("http://example.com"),
+					MarketplaceURL: model.NewString("http://example.com"),
 				},
 			},
 			"tag1",
@@ -175,6 +148,118 @@ func TestGetClientConfig(t *testing.T) {
 			nil,
 			map[string]string{
 				"ShowFullName": "true",
+			},
+		},
+		{
+			"Insights professional license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					InsightsEnabled: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: model.LicenseShortSkuProfessional,
+			},
+			map[string]string{
+				"InsightsEnabled": "true",
+			},
+		},
+		{
+			"Insights enterprise license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					InsightsEnabled: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: model.LicenseShortSkuEnterprise,
+			},
+			map[string]string{
+				"InsightsEnabled": "true",
+			},
+		},
+		{
+			"Insights other license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					InsightsEnabled: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: "other",
+			},
+			map[string]string{
+				"InsightsEnabled": "false",
+			},
+		},
+		{
+			"Insights professional license, feature flag disabled",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					InsightsEnabled: false,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: model.LicenseShortSkuProfessional,
+			},
+			map[string]string{
+				"InsightsEnabled": "false",
+			},
+		},
+		{
+			"Custom groups professional license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					CustomGroups: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: model.LicenseShortSkuProfessional,
+			},
+			map[string]string{
+				"EnableCustomGroups": "true",
+			},
+		},
+		{
+			"Custom groups enterprise license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					CustomGroups: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: model.LicenseShortSkuEnterprise,
+			},
+			map[string]string{
+				"EnableCustomGroups": "true",
+			},
+		},
+		{
+			"Custom groups other license",
+			&model.Config{
+				FeatureFlags: &model.FeatureFlags{
+					InsightsEnabled: true,
+				},
+			},
+			"",
+			&model.License{
+				Features:     &model.Features{},
+				SkuShortName: "other",
+			},
+			map[string]string{
+				"EnableCustomGroups": "false",
 			},
 		},
 	}

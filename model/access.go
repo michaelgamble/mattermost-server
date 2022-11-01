@@ -4,7 +4,6 @@
 package model
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -25,18 +24,17 @@ type AccessData struct {
 }
 
 type AccessResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int32  `json:"expires_in"`
-	Scope        string `json:"scope"`
-	RefreshToken string `json:"refresh_token"`
-	IdToken      string `json:"id_token"`
+	AccessToken      string `json:"access_token"`
+	TokenType        string `json:"token_type"`
+	ExpiresInSeconds int32  `json:"expires_in"`
+	Scope            string `json:"scope"`
+	RefreshToken     string `json:"refresh_token"`
+	IdToken          string `json:"id_token"`
 }
 
 // IsValid validates the AccessData and returns an error if it isn't configured
 // correctly.
 func (ad *AccessData) IsValid() *AppError {
-
 	if ad.ClientId == "" || len(ad.ClientId) > 26 {
 		return NewAppError("AccessData.IsValid", "model.access.is_valid.client_id.app_error", nil, "", http.StatusBadRequest)
 	}
@@ -53,7 +51,7 @@ func (ad *AccessData) IsValid() *AppError {
 		return NewAppError("AccessData.IsValid", "model.access.is_valid.refresh_token.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if ad.RedirectUri == "" || len(ad.RedirectUri) > 256 || !IsValidHttpUrl(ad.RedirectUri) {
+	if ad.RedirectUri == "" || len(ad.RedirectUri) > 256 || !IsValidHTTPURL(ad.RedirectUri) {
 		return NewAppError("AccessData.IsValid", "model.access.is_valid.redirect_uri.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -71,14 +69,4 @@ func (ad *AccessData) IsExpired() bool {
 	}
 
 	return false
-}
-
-func (ad *AccessData) ToJson() string {
-	b, _ := json.Marshal(ad)
-	return string(b)
-}
-
-func (ar *AccessResponse) ToJson() string {
-	b, _ := json.Marshal(ar)
-	return string(b)
 }

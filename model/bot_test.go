@@ -24,7 +24,7 @@ func TestBotTrace(t *testing.T) {
 		DeleteAt:       4,
 	}
 
-	require.Equal(t, map[string]interface{}{"user_id": bot.UserId}, bot.Trace())
+	require.Equal(t, map[string]any{"user_id": bot.UserId}, bot.Trace())
 }
 
 func TestBotClone(t *testing.T) {
@@ -246,7 +246,15 @@ func TestBotPreSave(t *testing.T) {
 		DeleteAt:       0,
 	}
 
-	originalBot := &*bot
+	originalBot := &Bot{
+		UserId:         bot.UserId,
+		Username:       bot.Username,
+		DisplayName:    bot.DisplayName,
+		Description:    bot.Description,
+		OwnerId:        bot.OwnerId,
+		LastIconUpdate: bot.LastIconUpdate,
+		DeleteAt:       bot.DeleteAt,
+	}
 
 	bot.PreSave()
 	assert.NotEqual(t, 0, bot.CreateAt)
@@ -269,11 +277,20 @@ func TestBotPreUpdate(t *testing.T) {
 		DeleteAt:       0,
 	}
 
-	originalBot := &*bot
+	originalBot := &Bot{
+		UserId:         bot.UserId,
+		Username:       bot.Username,
+		DisplayName:    bot.DisplayName,
+		Description:    bot.Description,
+		OwnerId:        bot.OwnerId,
+		LastIconUpdate: bot.LastIconUpdate,
+		DeleteAt:       bot.DeleteAt,
+	}
 
 	bot.PreSave()
 	assert.NotEqual(t, 0, bot.UpdateAt)
 
+	originalBot.CreateAt = bot.CreateAt
 	originalBot.UpdateAt = bot.UpdateAt
 	assert.Equal(t, originalBot, bot)
 }

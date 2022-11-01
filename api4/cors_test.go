@@ -127,12 +127,9 @@ func TestCORSRequestHandling(t *testing.T) {
 				*cfg.ServiceSettings.CorsAllowCredentials = testcase.CorsAllowCredentials
 			})
 			defer th.TearDown()
-			systemStore := mocks.SystemStore{}
-			systemStore.On("Get").Return(make(model.StringMap), nil)
 			licenseStore := mocks.LicenseStore{}
 			licenseStore.On("Get", "").Return(&model.LicenseRecord{}, nil)
-			th.App.Srv().Store.(*mocks.Store).On("System").Return(&systemStore)
-			th.App.Srv().Store.(*mocks.Store).On("License").Return(&licenseStore)
+			th.App.Srv().Store().(*mocks.Store).On("License").Return(&licenseStore)
 
 			port := th.App.Srv().ListenAddr.Port
 			host := fmt.Sprintf("http://localhost:%v", port)

@@ -16,11 +16,11 @@ func WithMaster(ctx context.Context) context.Context {
 	return sqlstore.WithMaster(ctx)
 }
 
-func pluginContext(c *request.Context) *plugin.Context {
+func pluginContext(c request.CTX) *plugin.Context {
 	context := &plugin.Context{
 		RequestId:      c.RequestId(),
 		SessionId:      c.Session().Id,
-		IpAddress:      c.IpAddress(),
+		IPAddress:      c.IPAddress(),
 		AcceptLanguage: c.AcceptLanguage(),
 		UserAgent:      c.UserAgent(),
 	}

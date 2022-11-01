@@ -19,12 +19,15 @@ import (
 )
 
 type Context struct {
-	App           app.AppIface
-	AppContext    *request.Context
-	Logger        *mlog.Logger
-	Params        *Params
-	Err           *model.AppError
-	siteURLHeader string
+	App        app.AppIface
+	AppContext *request.Context
+	Logger     *mlog.Logger
+	Params     *Params
+	Err        *model.AppError
+	// This is used to track the graphQL query that's being executed,
+	// so that we can monitor the timings in Grafana.
+	GraphQLOperationName string
+	siteURLHeader        string
 }
 
 // LogAuditRec logs an audit record using default LevelAPI.
@@ -35,13 +38,13 @@ func (c *Context) LogAuditRec(rec *audit.Record) {
 // LogAuditRec logs an audit record using specified Level.
 // If the context is flagged with a permissions error then `level`
 // is ignored and the audit record is emitted with `LevelPerms`.
-func (c *Context) LogAuditRecWithLevel(rec *audit.Record, level mlog.LogLevel) {
+func (c *Context) LogAuditRecWithLevel(rec *audit.Record, level mlog.Level) {
 	if rec == nil {
 		return
 	}
 	if c.Err != nil {
-		rec.AddMeta("err", c.Err.Id)
-		rec.AddMeta("code", c.Err.StatusCode)
+		rec.AddErrorCode(c.Err.StatusCode)
+		rec.AddErrorDesc(c.Err.Error())
 		if c.Err.Id == "api.context.permissions.app_error" {
 			level = app.LevelPerms
 		}
@@ -53,24 +56,33 @@ func (c *Context) LogAuditRecWithLevel(rec *audit.Record, level mlog.LogLevel) {
 // MakeAuditRecord creates a audit record pre-populated with data from this context.
 func (c *Context) MakeAuditRecord(event string, initialStatus string) *audit.Record {
 	rec := &audit.Record{
-		APIPath:   c.AppContext.Path(),
-		Event:     event,
+		EventName: event,
 		Status:    initialStatus,
-		UserID:    c.AppContext.Session().UserId,
-		SessionID: c.AppContext.Session().Id,
-		Client:    c.AppContext.UserAgent(),
-		IPAddress: c.AppContext.IpAddress(),
-		Meta:      audit.Meta{audit.KeyClusterID: c.App.GetClusterId()},
+		Actor: audit.EventActor{
+			UserId:    c.AppContext.Session().UserId,
+			SessionId: c.AppContext.Session().Id,
+			Client:    c.AppContext.UserAgent(),
+			IpAddress: c.AppContext.IPAddress(),
+		},
+		Meta: map[string]interface{}{
+			audit.KeyAPIPath:   c.AppContext.Path(),
+			audit.KeyClusterID: c.App.GetClusterId(),
+		},
+		EventData: audit.EventData{
+			Parameters:  map[string]interface{}{},
+			PriorState:  map[string]interface{}{},
+			ResultState: map[string]interface{}{},
+			ObjectType:  "",
+		},
 	}
-	rec.AddMetaTypeConverter(model.AuditModelTypeConv)
 
 	return rec
 }
 
 func (c *Context) LogAudit(extraInfo string) {
-	audit := &model.Audit{UserId: c.AppContext.Session().UserId, IpAddress: c.AppContext.IpAddress(), Action: c.AppContext.Path(), ExtraInfo: extraInfo, SessionId: c.AppContext.Session().Id}
-	if err := c.App.Srv().Store.Audit().Save(audit); err != nil {
-		appErr := model.NewAppError("LogAudit", "app.audit.save.saving.app_error", nil, err.Error(), http.StatusInternalServerError)
+	audit := &model.Audit{UserId: c.AppContext.Session().UserId, IpAddress: c.AppContext.IPAddress(), Action: c.AppContext.Path(), ExtraInfo: extraInfo, SessionId: c.AppContext.Session().Id}
+	if err := c.App.Srv().Store().Audit().Save(audit); err != nil {
+		appErr := model.NewAppError("LogAudit", "app.audit.save.saving.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		c.LogErrorByCode(appErr)
 	}
 }
@@ -80,9 +92,9 @@ func (c *Context) LogAuditWithUserId(userId, extraInfo string) {
 		extraInfo = strings.TrimSpace(extraInfo + " session_user=" + c.AppContext.Session().UserId)
 	}
 
-	audit := &model.Audit{UserId: userId, IpAddress: c.AppContext.IpAddress(), Action: c.AppContext.Path(), ExtraInfo: extraInfo, SessionId: c.AppContext.Session().Id}
-	if err := c.App.Srv().Store.Audit().Save(audit); err != nil {
-		appErr := model.NewAppError("LogAuditWithUserId", "app.audit.save.saving.app_error", nil, err.Error(), http.StatusInternalServerError)
+	audit := &model.Audit{UserId: userId, IpAddress: c.AppContext.IPAddress(), Action: c.AppContext.Path(), ExtraInfo: extraInfo, SessionId: c.AppContext.Session().Id}
+	if err := c.App.Srv().Store().Audit().Save(audit); err != nil {
+		appErr := model.NewAppError("LogAuditWithUserId", "app.audit.save.saving.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		c.LogErrorByCode(appErr)
 	}
 }
@@ -93,7 +105,7 @@ func (c *Context) LogErrorByCode(err *model.AppError) {
 	fields := []mlog.Field{
 		mlog.String("err_where", err.Where),
 		mlog.Int("http_code", err.StatusCode),
-		mlog.String("err_details", err.DetailedError),
+		mlog.String("error", err.Error()),
 	}
 	switch {
 	case (code >= http.StatusBadRequest && code < http.StatusInternalServerError) ||
@@ -126,14 +138,14 @@ func (c *Context) SessionRequired() {
 }
 
 func (c *Context) CloudKeyRequired() {
-	if license := c.App.Srv().License(); license == nil || !*license.Features.Cloud || c.AppContext.Session().Props[model.SessionPropType] != model.SessionTypeCloudKey {
+	if license := c.App.Channels().License(); license == nil || !*license.Features.Cloud || c.AppContext.Session().Props[model.SessionPropType] != model.SessionTypeCloudKey {
 		c.Err = model.NewAppError("", "api.context.session_expired.app_error", nil, "TokenRequired", http.StatusUnauthorized)
 		return
 	}
 }
 
 func (c *Context) RemoteClusterTokenRequired() {
-	if license := c.App.Srv().License(); license == nil || !*license.Features.RemoteClusterService || c.AppContext.Session().Props[model.SessionPropType] != model.SessionTypeRemoteclusterToken {
+	if license := c.App.Channels().License(); license == nil || !*license.Features.RemoteClusterService || c.AppContext.Session().Props[model.SessionPropType] != model.SessionTypeRemoteclusterToken {
 		c.Err = model.NewAppError("", "api.context.session_expired.app_error", nil, "TokenRequired", http.StatusUnauthorized)
 		return
 	}
@@ -141,7 +153,7 @@ func (c *Context) RemoteClusterTokenRequired() {
 
 func (c *Context) MfaRequired() {
 	// Must be licensed for MFA and have it configured for enforcement
-	if license := c.App.Srv().License(); license == nil || !*license.Features.MFA || !*c.App.Config().ServiceSettings.EnableMultifactorAuthentication || !*c.App.Config().ServiceSettings.EnforceMultifactorAuthentication {
+	if license := c.App.Channels().License(); license == nil || !*license.Features.MFA || !*c.App.Config().ServiceSettings.EnableMultifactorAuthentication || !*c.App.Config().ServiceSettings.EnforceMultifactorAuthentication {
 		return
 	}
 
@@ -152,7 +164,7 @@ func (c *Context) MfaRequired() {
 
 	user, err := c.App.GetUser(c.AppContext.Session().UserId)
 	if err != nil {
-		c.Err = model.NewAppError("MfaRequired", "api.context.get_user.app_error", nil, err.Error(), http.StatusUnauthorized)
+		c.Err = model.NewAppError("MfaRequired", "api.context.get_user.app_error", nil, "", http.StatusUnauthorized).Wrap(err)
 		return
 	}
 
@@ -209,8 +221,12 @@ func (c *Context) SetInvalidParam(parameter string) {
 	c.Err = NewInvalidParamError(parameter)
 }
 
-func (c *Context) SetInvalidUrlParam(parameter string) {
-	c.Err = NewInvalidUrlParamError(parameter)
+func (c *Context) SetInvalidParamWithErr(parameter string, err error) {
+	c.Err = NewInvalidParamError(parameter).Wrap(err)
+}
+
+func (c *Context) SetInvalidURLParam(parameter string) {
+	c.Err = NewInvalidURLParamError(parameter)
 }
 
 func (c *Context) SetServerBusyError() {
@@ -225,8 +241,8 @@ func (c *Context) SetInvalidRemoteClusterTokenError() {
 	c.Err = NewInvalidRemoteClusterTokenError()
 }
 
-func (c *Context) SetJSONEncodingError() {
-	c.Err = NewJSONEncodingError()
+func (c *Context) SetJSONEncodingError(err error) {
+	c.Err = NewJSONEncodingError(err)
 }
 
 func (c *Context) SetCommandNotFoundError() {
@@ -254,20 +270,22 @@ func (c *Context) HandleEtag(etag string, routeName string, w http.ResponseWrite
 }
 
 func NewInvalidParamError(parameter string) *model.AppError {
-	err := model.NewAppError("Context", "api.context.invalid_body_param.app_error", map[string]interface{}{"Name": parameter}, "", http.StatusBadRequest)
+	err := model.NewAppError("Context", "api.context.invalid_body_param.app_error", map[string]any{"Name": parameter}, "", http.StatusBadRequest)
 	return err
 }
-func NewInvalidUrlParamError(parameter string) *model.AppError {
-	err := model.NewAppError("Context", "api.context.invalid_url_param.app_error", map[string]interface{}{"Name": parameter}, "", http.StatusBadRequest)
+
+func NewInvalidURLParamError(parameter string) *model.AppError {
+	err := model.NewAppError("Context", "api.context.invalid_url_param.app_error", map[string]any{"Name": parameter}, "", http.StatusBadRequest)
 	return err
 }
+
 func NewServerBusyError() *model.AppError {
 	err := model.NewAppError("Context", "api.context.server_busy.app_error", nil, "", http.StatusServiceUnavailable)
 	return err
 }
 
 func NewInvalidRemoteIdError(parameter string) *model.AppError {
-	err := model.NewAppError("Context", "api.context.remote_id_invalid.app_error", map[string]interface{}{"RemoteId": parameter}, "", http.StatusBadRequest)
+	err := model.NewAppError("Context", "api.context.remote_id_invalid.app_error", map[string]any{"RemoteId": parameter}, "", http.StatusBadRequest)
 	return err
 }
 
@@ -276,9 +294,9 @@ func NewInvalidRemoteClusterTokenError() *model.AppError {
 	return err
 }
 
-func NewJSONEncodingError() *model.AppError {
-	err := model.NewAppError("Context", "api.context.json_encoding.app_error", nil, "", http.StatusInternalServerError)
-	return err
+func NewJSONEncodingError(err error) *model.AppError {
+	appErr := model.NewAppError("Context", "api.context.json_encoding.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	return appErr
 }
 
 func (c *Context) SetPermissionError(permissions ...*model.Permission) {
@@ -303,7 +321,7 @@ func (c *Context) RequireUserId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.UserId) {
-		c.SetInvalidUrlParam("user_id")
+		c.SetInvalidURLParam("user_id")
 	}
 	return c
 }
@@ -314,7 +332,7 @@ func (c *Context) RequireTeamId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.TeamId) {
-		c.SetInvalidUrlParam("team_id")
+		c.SetInvalidURLParam("team_id")
 	}
 	return c
 }
@@ -325,7 +343,7 @@ func (c *Context) RequireCategoryId() *Context {
 	}
 
 	if !model.IsValidCategoryId(c.Params.CategoryId) {
-		c.SetInvalidUrlParam("category_id")
+		c.SetInvalidURLParam("category_id")
 	}
 	return c
 }
@@ -336,7 +354,7 @@ func (c *Context) RequireInviteId() *Context {
 	}
 
 	if c.Params.InviteId == "" {
-		c.SetInvalidUrlParam("invite_id")
+		c.SetInvalidURLParam("invite_id")
 	}
 	return c
 }
@@ -347,7 +365,7 @@ func (c *Context) RequireTokenId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.TokenId) {
-		c.SetInvalidUrlParam("token_id")
+		c.SetInvalidURLParam("token_id")
 	}
 	return c
 }
@@ -358,7 +376,7 @@ func (c *Context) RequireThreadId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.ThreadId) {
-		c.SetInvalidUrlParam("thread_id")
+		c.SetInvalidURLParam("thread_id")
 	}
 	return c
 }
@@ -369,7 +387,7 @@ func (c *Context) RequireTimestamp() *Context {
 	}
 
 	if c.Params.Timestamp == 0 {
-		c.SetInvalidUrlParam("timestamp")
+		c.SetInvalidURLParam("timestamp")
 	}
 	return c
 }
@@ -380,7 +398,7 @@ func (c *Context) RequireChannelId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.ChannelId) {
-		c.SetInvalidUrlParam("channel_id")
+		c.SetInvalidURLParam("channel_id")
 	}
 	return c
 }
@@ -403,7 +421,7 @@ func (c *Context) RequirePostId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.PostId) {
-		c.SetInvalidUrlParam("post_id")
+		c.SetInvalidURLParam("post_id")
 	}
 	return c
 }
@@ -414,7 +432,7 @@ func (c *Context) RequirePolicyId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.PolicyId) {
-		c.SetInvalidUrlParam("policy_id")
+		c.SetInvalidURLParam("policy_id")
 	}
 	return c
 }
@@ -425,7 +443,7 @@ func (c *Context) RequireAppId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.AppId) {
-		c.SetInvalidUrlParam("app_id")
+		c.SetInvalidURLParam("app_id")
 	}
 	return c
 }
@@ -436,7 +454,7 @@ func (c *Context) RequireFileId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.FileId) {
-		c.SetInvalidUrlParam("file_id")
+		c.SetInvalidURLParam("file_id")
 	}
 
 	return c
@@ -448,7 +466,7 @@ func (c *Context) RequireUploadId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.UploadId) {
-		c.SetInvalidUrlParam("upload_id")
+		c.SetInvalidURLParam("upload_id")
 	}
 
 	return c
@@ -460,7 +478,7 @@ func (c *Context) RequireFilename() *Context {
 	}
 
 	if c.Params.Filename == "" {
-		c.SetInvalidUrlParam("filename")
+		c.SetInvalidURLParam("filename")
 	}
 
 	return c
@@ -472,7 +490,7 @@ func (c *Context) RequirePluginId() *Context {
 	}
 
 	if c.Params.PluginId == "" {
-		c.SetInvalidUrlParam("plugin_id")
+		c.SetInvalidURLParam("plugin_id")
 	}
 
 	return c
@@ -484,7 +502,7 @@ func (c *Context) RequireReportId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.ReportId) {
-		c.SetInvalidUrlParam("report_id")
+		c.SetInvalidURLParam("report_id")
 	}
 	return c
 }
@@ -495,7 +513,7 @@ func (c *Context) RequireEmojiId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.EmojiId) {
-		c.SetInvalidUrlParam("emoji_id")
+		c.SetInvalidURLParam("emoji_id")
 	}
 	return c
 }
@@ -506,7 +524,7 @@ func (c *Context) RequireTeamName() *Context {
 	}
 
 	if !model.IsValidTeamName(c.Params.TeamName) {
-		c.SetInvalidUrlParam("team_name")
+		c.SetInvalidURLParam("team_name")
 	}
 
 	return c
@@ -518,7 +536,7 @@ func (c *Context) RequireChannelName() *Context {
 	}
 
 	if !model.IsValidChannelIdentifier(c.Params.ChannelName) {
-		c.SetInvalidUrlParam("channel_name")
+		c.SetInvalidURLParam("channel_name")
 	}
 
 	return c
@@ -530,7 +548,7 @@ func (c *Context) SanitizeEmail() *Context {
 	}
 	c.Params.Email = strings.ToLower(c.Params.Email)
 	if !model.IsValidEmail(c.Params.Email) {
-		c.SetInvalidUrlParam("email")
+		c.SetInvalidURLParam("email")
 	}
 
 	return c
@@ -542,7 +560,7 @@ func (c *Context) RequireCategory() *Context {
 	}
 
 	if !model.IsValidAlphaNumHyphenUnderscore(c.Params.Category, true) {
-		c.SetInvalidUrlParam("category")
+		c.SetInvalidURLParam("category")
 	}
 
 	return c
@@ -554,7 +572,7 @@ func (c *Context) RequireService() *Context {
 	}
 
 	if c.Params.Service == "" {
-		c.SetInvalidUrlParam("service")
+		c.SetInvalidURLParam("service")
 	}
 
 	return c
@@ -566,7 +584,7 @@ func (c *Context) RequirePreferenceName() *Context {
 	}
 
 	if !model.IsValidAlphaNumHyphenUnderscore(c.Params.PreferenceName, true) {
-		c.SetInvalidUrlParam("preference_name")
+		c.SetInvalidURLParam("preference_name")
 	}
 
 	return c
@@ -580,7 +598,7 @@ func (c *Context) RequireEmojiName() *Context {
 	validName := regexp.MustCompile(`^[a-zA-Z0-9\-\+_]+$`)
 
 	if c.Params.EmojiName == "" || len(c.Params.EmojiName) > model.EmojiNameMaxLength || !validName.MatchString(c.Params.EmojiName) {
-		c.SetInvalidUrlParam("emoji_name")
+		c.SetInvalidURLParam("emoji_name")
 	}
 
 	return c
@@ -592,7 +610,7 @@ func (c *Context) RequireHookId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.HookId) {
-		c.SetInvalidUrlParam("hook_id")
+		c.SetInvalidURLParam("hook_id")
 	}
 
 	return c
@@ -604,7 +622,7 @@ func (c *Context) RequireCommandId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.CommandId) {
-		c.SetInvalidUrlParam("command_id")
+		c.SetInvalidURLParam("command_id")
 	}
 	return c
 }
@@ -615,7 +633,7 @@ func (c *Context) RequireJobId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.JobId) {
-		c.SetInvalidUrlParam("job_id")
+		c.SetInvalidURLParam("job_id")
 	}
 	return c
 }
@@ -626,7 +644,7 @@ func (c *Context) RequireJobType() *Context {
 	}
 
 	if c.Params.JobType == "" || len(c.Params.JobType) > 32 {
-		c.SetInvalidUrlParam("job_type")
+		c.SetInvalidURLParam("job_type")
 	}
 	return c
 }
@@ -637,7 +655,7 @@ func (c *Context) RequireRoleId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.RoleId) {
-		c.SetInvalidUrlParam("role_id")
+		c.SetInvalidURLParam("role_id")
 	}
 	return c
 }
@@ -648,7 +666,7 @@ func (c *Context) RequireSchemeId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.SchemeId) {
-		c.SetInvalidUrlParam("scheme_id")
+		c.SetInvalidURLParam("scheme_id")
 	}
 	return c
 }
@@ -659,7 +677,7 @@ func (c *Context) RequireRoleName() *Context {
 	}
 
 	if !model.IsValidRoleName(c.Params.RoleName) {
-		c.SetInvalidUrlParam("role_name")
+		c.SetInvalidURLParam("role_name")
 	}
 
 	return c
@@ -671,7 +689,7 @@ func (c *Context) RequireGroupId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.GroupId) {
-		c.SetInvalidUrlParam("group_id")
+		c.SetInvalidURLParam("group_id")
 	}
 	return c
 }
@@ -682,7 +700,7 @@ func (c *Context) RequireRemoteId() *Context {
 	}
 
 	if c.Params.RemoteId == "" {
-		c.SetInvalidUrlParam("remote_id")
+		c.SetInvalidURLParam("remote_id")
 	}
 	return c
 }
@@ -693,7 +711,7 @@ func (c *Context) RequireSyncableId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.SyncableId) {
-		c.SetInvalidUrlParam("syncable_id")
+		c.SetInvalidURLParam("syncable_id")
 	}
 	return c
 }
@@ -704,7 +722,7 @@ func (c *Context) RequireSyncableType() *Context {
 	}
 
 	if c.Params.SyncableType != model.GroupSyncableTypeTeam && c.Params.SyncableType != model.GroupSyncableTypeChannel {
-		c.SetInvalidUrlParam("syncable_type")
+		c.SetInvalidURLParam("syncable_type")
 	}
 	return c
 }
@@ -715,7 +733,7 @@ func (c *Context) RequireBotUserId() *Context {
 	}
 
 	if !model.IsValidId(c.Params.BotUserId) {
-		c.SetInvalidUrlParam("bot_user_id")
+		c.SetInvalidURLParam("bot_user_id")
 	}
 	return c
 }
@@ -726,7 +744,7 @@ func (c *Context) RequireInvoiceId() *Context {
 	}
 
 	if len(c.Params.InvoiceId) != 27 {
-		c.SetInvalidUrlParam("invoice_id")
+		c.SetInvalidURLParam("invoice_id")
 	}
 
 	return c

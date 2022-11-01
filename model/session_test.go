@@ -7,11 +7,71 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSessionIsValid(t *testing.T) {
+	tcs := []struct {
+		name          string
+		input         Session
+		expectedError string
+	}{
+		{
+			"Invalid Id",
+			Session{},
+			"model.session.is_valid.id.app_error",
+		},
+		{
+			"Invalid UserId",
+			Session{
+				Id: NewId(),
+			},
+			"model.session.is_valid.user_id.app_error",
+		},
+		{
+			"Invalid CreateAt",
+			Session{
+				Id:     NewId(),
+				UserId: NewId(),
+			},
+			"model.session.is_valid.create_at.app_error",
+		},
+		{
+			"Invalid Roles",
+			Session{
+				Id:       NewId(),
+				UserId:   NewId(),
+				CreateAt: 1000,
+				Roles:    strings.Repeat("a", UserRolesMaxLength+1),
+			},
+			"model.session.is_valid.roles_limit.app_error",
+		},
+		{
+			"Valid",
+			Session{
+				Id:       NewId(),
+				UserId:   NewId(),
+				CreateAt: 1000,
+				Roles:    strings.Repeat("a", UserRolesMaxLength),
+			},
+			"",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			appErr := tc.input.IsValid()
+			if tc.expectedError != "" {
+				require.NotNil(t, appErr)
+				require.Equal(t, tc.expectedError, appErr.Id)
+			} else {
+				require.Nil(t, appErr)
+			}
+		})
+	}
+}
 
 func TestSessionDeepCopy(t *testing.T) {
 	sessionId := NewId()
@@ -38,25 +98,7 @@ func TestSessionDeepCopy(t *testing.T) {
 	session = &Session{TeamMembers: []*TeamMember{}}
 	copySession = session.DeepCopy()
 
-	assert.Equal(t, 0, len(copySession.TeamMembers))
-}
-
-func TestSessionJson(t *testing.T) {
-	session := Session{}
-	session.PreSave()
-	json := session.ToJson()
-	rsession := SessionFromJson(strings.NewReader(json))
-
-	require.Equal(t, rsession.Id, session.Id, "Ids do not match")
-
-	session.Sanitize()
-
-	require.False(t, session.IsExpired(), "Shouldn't expire")
-
-	session.ExpiresAt = GetMillis()
-	time.Sleep(10 * time.Millisecond)
-
-	require.True(t, session.IsExpired(), "Should expire")
+	assert.Empty(t, copySession.TeamMembers)
 }
 
 func TestSessionCSRF(t *testing.T) {

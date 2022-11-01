@@ -11,7 +11,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,7 +54,7 @@ func getDefaultPluginSettingsSchema() string {
 
 func setDefaultPluginConfig(th *TestHelper, pluginID string) {
 	th.App.UpdateConfig(func(cfg *model.Config) {
-		cfg.PluginSettings.Plugins[pluginID] = map[string]interface{}{
+		cfg.PluginSettings.Plugins[pluginID] = map[string]any{
 			"BasicChannelName":     th.BasicChannel.Name,
 			"BasicChannelId":       th.BasicChannel.Id,
 			"BasicTeamName":        th.BasicTeam.Name,
@@ -69,8 +69,8 @@ func setDefaultPluginConfig(th *TestHelper, pluginID string) {
 	})
 }
 
-func setupMultiPluginApiTest(t *testing.T, pluginCodes []string, pluginManifests []string, pluginIDs []string, asMain bool, app *App, c *request.Context) string {
-	pluginDir, err := ioutil.TempDir("", "")
+func setupMultiPluginAPITest(t *testing.T, pluginCodes []string, pluginManifests []string, pluginIDs []string, asMain bool, app *App, c *request.Context) string {
+	pluginDir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err = os.RemoveAll(pluginDir)
@@ -79,7 +79,7 @@ func setupMultiPluginApiTest(t *testing.T, pluginCodes []string, pluginManifests
 		}
 	})
 
-	webappPluginDir, err := ioutil.TempDir("", "")
+	webappPluginDir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		err = os.RemoveAll(webappPluginDir)
@@ -92,7 +92,7 @@ func setupMultiPluginApiTest(t *testing.T, pluginCodes []string, pluginManifests
 		return app.NewPluginAPI(c, manifest)
 	}
 
-	env, err := plugin.NewEnvironment(newPluginAPI, NewDriverImpl(app.srv), pluginDir, webappPluginDir, app.Log(), nil)
+	env, err := plugin.NewEnvironment(newPluginAPI, NewDriverImpl(app.Srv()), pluginDir, webappPluginDir, app.Log(), nil)
 	require.NoError(t, err)
 
 	require.Equal(t, len(pluginCodes), len(pluginIDs))
@@ -106,7 +106,7 @@ func setupMultiPluginApiTest(t *testing.T, pluginCodes []string, pluginManifests
 			utils.CompileGoTest(t, pluginCodes[i], backend)
 		}
 
-		ioutil.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(pluginManifests[i]), 0600)
+		os.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(pluginManifests[i]), 0600)
 		manifest, activated, reterr := env.Activate(pluginID)
 		require.NoError(t, reterr)
 		require.NotNil(t, manifest)
@@ -119,15 +119,15 @@ func setupMultiPluginApiTest(t *testing.T, pluginCodes []string, pluginManifests
 		})
 	}
 
-	app.SetPluginsEnvironment(env)
+	app.ch.SetPluginsEnvironment(env)
 
 	return pluginDir
 }
 
-func setupPluginApiTest(t *testing.T, pluginCode string, pluginManifest string, pluginID string, app *App, c *request.Context) string {
+func setupPluginAPITest(t *testing.T, pluginCode string, pluginManifest string, pluginID string, app *App, c *request.Context) string {
 
 	asMain := pluginID != "test_db_driver"
-	return setupMultiPluginApiTest(t,
+	return setupMultiPluginAPITest(t,
 		[]string{pluginCode}, []string{pluginManifest}, []string{pluginID},
 		asMain, app, c)
 }
@@ -138,7 +138,7 @@ func TestPublicFilesPathConfiguration(t *testing.T) {
 
 	pluginID := "com.mattermost.sample"
 
-	pluginDir := setupPluginApiTest(t,
+	pluginDir := setupPluginAPITest(t,
 		`
 		package main
 
@@ -177,20 +177,26 @@ func TestPluginAPIGetUserPreferences(t *testing.T) {
 
 	preferences, err := api.GetPreferencesForUser(user1.Id)
 	require.Nil(t, err)
-	assert.Equal(t, 2, len(preferences))
+	assert.Equal(t, 3, len(preferences))
 
 	assert.Equal(t, user1.Id, preferences[0].UserId)
-	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[0].Category)
-	assert.Equal(t, "hide", preferences[0].Name)
-	assert.Equal(t, "false", preferences[0].Value)
+	assert.Equal(t, model.PreferenceCategoryInsights, preferences[0].Category)
+	assert.Equal(t, model.PreferenceNameInsights, preferences[0].Name)
+	assert.Equal(t, "{\"insights_modal_viewed\":true}", preferences[0].Value)
 
 	assert.Equal(t, user1.Id, preferences[1].UserId)
-	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[1].Category)
-	assert.Equal(t, user1.Id, preferences[1].Name)
-	assert.Equal(t, "0", preferences[1].Value)
+	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[1].Category)
+	assert.Equal(t, "hide", preferences[1].Name)
+	assert.Equal(t, "false", preferences[1].Value)
+
+	assert.Equal(t, user1.Id, preferences[2].UserId)
+	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[2].Category)
+	assert.Equal(t, user1.Id, preferences[2].Name)
+	assert.Equal(t, "0", preferences[2].Value)
 }
 
 func TestPluginAPIDeleteUserPreferences(t *testing.T) {
+	t.Skip("MM-47612")
 	th := Setup(t)
 	defer th.TearDown()
 	api := th.SetupPluginAPI()
@@ -205,7 +211,7 @@ func TestPluginAPIDeleteUserPreferences(t *testing.T) {
 
 	preferences, err := api.GetPreferencesForUser(user1.Id)
 	require.Nil(t, err)
-	assert.Equal(t, 2, len(preferences))
+	assert.Equal(t, 3, len(preferences))
 
 	err = api.DeletePreferencesForUser(user1.Id, preferences)
 	require.Nil(t, err)
@@ -232,15 +238,16 @@ func TestPluginAPIDeleteUserPreferences(t *testing.T) {
 
 	preferences, err = api.GetPreferencesForUser(user2.Id)
 	require.Nil(t, err)
-	assert.Equal(t, 3, len(preferences))
+	assert.Equal(t, 4, len(preferences))
 
 	err = api.DeletePreferencesForUser(user2.Id, []model.Preference{preference})
 	require.Nil(t, err)
 	preferences, err = api.GetPreferencesForUser(user2.Id)
 	require.Nil(t, err)
-	assert.Equal(t, 2, len(preferences))
-	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[0].Category)
-	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[1].Category)
+	assert.Equal(t, 3, len(preferences))
+	assert.Equal(t, model.PreferenceCategoryInsights, preferences[0].Category)
+	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[1].Category)
+	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[2].Category)
 }
 
 func TestPluginAPIUpdateUserPreferences(t *testing.T) {
@@ -258,17 +265,22 @@ func TestPluginAPIUpdateUserPreferences(t *testing.T) {
 
 	preferences, err := api.GetPreferencesForUser(user1.Id)
 	require.Nil(t, err)
-	assert.Equal(t, 2, len(preferences))
+	assert.Equal(t, 3, len(preferences))
 
 	assert.Equal(t, user1.Id, preferences[0].UserId)
-	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[0].Category)
-	assert.Equal(t, "hide", preferences[0].Name)
-	assert.Equal(t, "false", preferences[0].Value)
+	assert.Equal(t, model.PreferenceCategoryInsights, preferences[0].Category)
+	assert.Equal(t, model.PreferenceNameInsights, preferences[0].Name)
+	assert.Equal(t, "{\"insights_modal_viewed\":true}", preferences[0].Value)
 
 	assert.Equal(t, user1.Id, preferences[1].UserId)
-	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[1].Category)
-	assert.Equal(t, user1.Id, preferences[1].Name)
-	assert.Equal(t, "0", preferences[1].Value)
+	assert.Equal(t, model.PreferenceRecommendedNextSteps, preferences[1].Category)
+	assert.Equal(t, "hide", preferences[1].Name)
+	assert.Equal(t, "false", preferences[1].Value)
+
+	assert.Equal(t, user1.Id, preferences[2].UserId)
+	assert.Equal(t, model.PreferenceCategoryTutorialSteps, preferences[2].Category)
+	assert.Equal(t, user1.Id, preferences[2].Name)
+	assert.Equal(t, "0", preferences[2].Value)
 
 	preference := model.Preference{
 		Name:     user1.Id,
@@ -283,8 +295,8 @@ func TestPluginAPIUpdateUserPreferences(t *testing.T) {
 	preferences, err = api.GetPreferencesForUser(user1.Id)
 	require.Nil(t, err)
 
-	assert.Equal(t, 3, len(preferences))
-	expectedCategories := []string{model.PreferenceCategoryTutorialSteps, model.PreferenceCategoryTheme, model.PreferenceRecommendedNextSteps}
+	assert.Equal(t, 4, len(preferences))
+	expectedCategories := []string{model.PreferenceCategoryTutorialSteps, model.PreferenceCategoryTheme, model.PreferenceRecommendedNextSteps, model.PreferenceCategoryInsights}
 	for _, pref := range preferences {
 		assert.Contains(t, expectedCategories, pref.Category)
 		assert.Equal(t, user1.Id, pref.UserId)
@@ -419,20 +431,20 @@ func TestPluginAPIGetUsersInTeam(t *testing.T) {
 	defer th.App.PermanentDeleteUser(th.Context, user4)
 
 	// Add all users to team 1
-	_, _, err = th.App.joinUserToTeam(team1, user1)
-	require.Nil(t, err)
-	_, _, err = th.App.joinUserToTeam(team1, user2)
-	require.Nil(t, err)
-	_, _, err = th.App.joinUserToTeam(team1, user3)
-	require.Nil(t, err)
-	_, _, err = th.App.joinUserToTeam(team1, user4)
-	require.Nil(t, err)
+	_, appErr := th.App.JoinUserToTeam(th.Context, team1, user1, "")
+	require.Nil(t, appErr)
+	_, appErr = th.App.JoinUserToTeam(th.Context, team1, user2, "")
+	require.Nil(t, appErr)
+	_, appErr = th.App.JoinUserToTeam(th.Context, team1, user3, "")
+	require.Nil(t, appErr)
+	_, appErr = th.App.JoinUserToTeam(th.Context, team1, user4, "")
+	require.Nil(t, appErr)
 
 	// Add only user3 and user4 to team 2
-	_, _, err = th.App.joinUserToTeam(team2, user3)
-	require.Nil(t, err)
-	_, _, err = th.App.joinUserToTeam(team2, user4)
-	require.Nil(t, err)
+	_, appErr = th.App.JoinUserToTeam(th.Context, team2, user3, "")
+	require.Nil(t, appErr)
+	_, appErr = th.App.JoinUserToTeam(th.Context, team2, user4, "")
+	require.Nil(t, appErr)
 
 	testCases := []struct {
 		Description   string
@@ -482,9 +494,69 @@ func TestPluginAPIGetUsersInTeam(t *testing.T) {
 		t.Run(testCase.Description, func(t *testing.T) {
 			users, err := api.GetUsersInTeam(testCase.TeamId, testCase.Page, testCase.PerPage)
 			assert.Nil(t, err)
-			assert.Equal(t, testCase.ExpectedUsers, users)
+			usersMap := make(map[string]bool)
+			for _, user := range testCase.ExpectedUsers {
+				usersMap[user.Id] = true
+			}
+			for _, user := range users {
+				delete(usersMap, user.Id)
+			}
+			assert.Empty(t, usersMap)
 		})
 	}
+}
+
+func TestPluginAPIUserCustomStatus(t *testing.T) {
+	th := Setup(t)
+	defer th.TearDown()
+	api := th.SetupPluginAPI()
+
+	user1, err := th.App.CreateUser(th.Context, &model.User{
+		Email:    strings.ToLower(model.NewId()) + "success+test@example.com",
+		Username: "user_" + model.NewId(),
+		Password: "password",
+	})
+	require.Nil(t, err)
+	defer th.App.PermanentDeleteUser(th.Context, user1)
+
+	custom := &model.CustomStatus{
+		Emoji: ":tada:",
+		Text:  "honk",
+	}
+
+	err = api.UpdateUserCustomStatus(user1.Id, custom)
+	assert.Nil(t, err)
+	userCs, err := th.App.GetCustomStatus(user1.Id)
+	assert.Nil(t, err)
+	assert.Equal(t, custom, userCs)
+
+	custom.Text = ""
+	err = api.UpdateUserCustomStatus(user1.Id, custom)
+	assert.Nil(t, err)
+	userCs, err = th.App.GetCustomStatus(user1.Id)
+	assert.Nil(t, err)
+	assert.Equal(t, custom, userCs)
+
+	custom.Text = "honk"
+	custom.Emoji = ""
+	err = api.UpdateUserCustomStatus(user1.Id, custom)
+	assert.Nil(t, err)
+	userCs, err = th.App.GetCustomStatus(user1.Id)
+	assert.Nil(t, err)
+	assert.Equal(t, custom, userCs)
+
+	custom.Text = ""
+	err = api.UpdateUserCustomStatus(user1.Id, custom)
+	assert.NotNil(t, err)
+	assert.Equal(t, err.Error(), "SetCustomStatus: Failed to update the custom status. Please add either emoji or custom text status or both.")
+
+	// Remove custom status
+	err = api.RemoveUserCustomStatus(user1.Id)
+	assert.Nil(t, err)
+	var csClear *model.CustomStatus
+	userCs, err = th.App.GetCustomStatus(user1.Id)
+	assert.Nil(t, err)
+	assert.Equal(t, csClear, userCs)
 }
 
 func TestPluginAPIGetFile(t *testing.T) {
@@ -499,7 +571,7 @@ func TestPluginAPIGetFile(t *testing.T) {
 	info, err := th.App.DoUploadFile(th.Context, uploadTime, th.BasicTeam.Id, th.BasicChannel.Id, th.BasicUser.Id, filename, fileData)
 	require.Nil(t, err)
 	defer func() {
-		th.App.Srv().Store.FileInfo().PermanentDelete(info.Id)
+		th.App.Srv().Store().FileInfo().PermanentDelete(info.Id)
 		th.App.RemoveFile(info.Path)
 	}()
 
@@ -528,7 +600,7 @@ func TestPluginAPIGetFileInfos(t *testing.T) {
 	)
 	require.Nil(t, err)
 	defer func() {
-		th.App.Srv().Store.FileInfo().PermanentDelete(fileInfo1.Id)
+		th.App.Srv().Store().FileInfo().PermanentDelete(fileInfo1.Id)
 		th.App.RemoveFile(fileInfo1.Path)
 	}()
 
@@ -542,7 +614,7 @@ func TestPluginAPIGetFileInfos(t *testing.T) {
 	)
 	require.Nil(t, err)
 	defer func() {
-		th.App.Srv().Store.FileInfo().PermanentDelete(fileInfo2.Id)
+		th.App.Srv().Store().FileInfo().PermanentDelete(fileInfo2.Id)
 		th.App.RemoveFile(fileInfo2.Path)
 	}()
 
@@ -556,7 +628,7 @@ func TestPluginAPIGetFileInfos(t *testing.T) {
 	)
 	require.Nil(t, err)
 	defer func() {
-		th.App.Srv().Store.FileInfo().PermanentDelete(fileInfo3.Id)
+		th.App.Srv().Store().FileInfo().PermanentDelete(fileInfo3.Id)
 		th.App.RemoveFile(fileInfo3.Path)
 	}()
 
@@ -620,7 +692,7 @@ func TestPluginAPISavePluginConfig(t *testing.T) {
 
 	pluginConfigJsonString := `{"mystringsetting": "str", "MyIntSetting": 32, "myboolsetting": true}`
 
-	var pluginConfig map[string]interface{}
+	var pluginConfig map[string]any
 	err := json.Unmarshal([]byte(pluginConfigJsonString), &pluginConfig)
 	require.NoError(t, err)
 
@@ -662,7 +734,7 @@ func TestPluginAPIGetPluginConfig(t *testing.T) {
 	api := NewPluginAPI(th.App, th.Context, manifest)
 
 	pluginConfigJsonString := `{"mystringsetting": "str", "myintsetting": 32, "myboolsetting": true}`
-	var pluginConfig map[string]interface{}
+	var pluginConfig map[string]any
 
 	err := json.Unmarshal([]byte(pluginConfigJsonString), &pluginConfig)
 	require.NoError(t, err)
@@ -679,7 +751,7 @@ func TestPluginAPILoadPluginConfiguration(t *testing.T) {
 	th := Setup(t)
 	defer th.TearDown()
 
-	var pluginJson map[string]interface{}
+	var pluginJson map[string]any
 	err := json.Unmarshal([]byte(`{"mystringsetting": "str", "MyIntSetting": 32, "myboolsetting": true}`), &pluginJson)
 	require.NoError(t, err)
 
@@ -691,7 +763,7 @@ func TestPluginAPILoadPluginConfiguration(t *testing.T) {
 	require.True(t, found, "Cannot find tests folder")
 	fullPath := path.Join(testFolder, "manual.test_load_configuration_plugin", "main.go")
 
-	err = pluginAPIHookTest(t, th, fullPath, "testloadpluginconfig", `{"id": "testloadpluginconfig", "backend": {"executable": "backend.exe"}, "settings_schema": {
+	err = pluginAPIHookTest(t, th, fullPath, "testloadpluginconfig", `{"id": "testloadpluginconfig", "server": {"executable": "backend.exe"}, "settings_schema": {
 		"settings": [
 			{
 				"key": "MyStringSetting",
@@ -708,14 +780,13 @@ func TestPluginAPILoadPluginConfiguration(t *testing.T) {
 		]
 	}}`)
 	require.NoError(t, err)
-
 }
 
 func TestPluginAPILoadPluginConfigurationDefaults(t *testing.T) {
 	th := Setup(t)
 	defer th.TearDown()
 
-	var pluginJson map[string]interface{}
+	var pluginJson map[string]any
 	err := json.Unmarshal([]byte(`{"mystringsetting": "override"}`), &pluginJson)
 	require.NoError(t, err)
 
@@ -748,7 +819,6 @@ func TestPluginAPILoadPluginConfigurationDefaults(t *testing.T) {
 	}`)
 
 	require.NoError(t, err)
-
 }
 
 func TestPluginAPIGetPlugins(t *testing.T) {
@@ -772,9 +842,9 @@ func TestPluginAPIGetPlugins(t *testing.T) {
     }
   `
 
-	pluginDir, err := ioutil.TempDir("", "")
+	pluginDir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
-	webappPluginDir, err := ioutil.TempDir("", "")
+	webappPluginDir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
 	defer os.RemoveAll(pluginDir)
 	defer os.RemoveAll(webappPluginDir)
@@ -788,7 +858,7 @@ func TestPluginAPIGetPlugins(t *testing.T) {
 		backend := filepath.Join(pluginDir, pluginID, "backend.exe")
 		utils.CompileGo(t, pluginCode, backend)
 
-		ioutil.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(fmt.Sprintf(`{"id": "%s", "server": {"executable": "backend.exe"}}`, pluginID)), 0600)
+		os.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(fmt.Sprintf(`{"id": "%s", "server": {"executable": "backend.exe"}}`, pluginID)), 0600)
 		manifest, activated, reterr := env.Activate(pluginID)
 
 		require.NoError(t, reterr)
@@ -796,7 +866,7 @@ func TestPluginAPIGetPlugins(t *testing.T) {
 		require.True(t, activated)
 		pluginManifests = append(pluginManifests, manifest)
 	}
-	th.App.SetPluginsEnvironment(env)
+	th.App.ch.SetPluginsEnvironment(env)
 
 	// Deactivate the last one for testing
 	success := env.Deactivate(pluginIDs[len(pluginIDs)-1])
@@ -815,12 +885,12 @@ func TestPluginAPIInstallPlugin(t *testing.T) {
 	api := th.SetupPluginAPI()
 
 	path, _ := fileutils.FindDir("tests")
-	tarData, err := ioutil.ReadFile(filepath.Join(path, "testplugin.tar.gz"))
+	tarData, err := os.ReadFile(filepath.Join(path, "testplugin.tar.gz"))
 	require.NoError(t, err)
 
 	_, appErr := api.InstallPlugin(bytes.NewReader(tarData), true)
 	assert.NotNil(t, appErr, "should not allow upload if upload disabled")
-	assert.Equal(t, appErr.Error(), "installPlugin: Plugins and/or plugin uploads have been disabled., ")
+	assert.Equal(t, appErr.Error(), "installPlugin: Plugins and/or plugin uploads have been disabled.")
 
 	th.App.UpdateConfig(func(cfg *model.Config) {
 		*cfg.PluginSettings.Enable = true
@@ -847,15 +917,15 @@ func TestPluginAPIInstallPlugin(t *testing.T) {
 }
 
 func TestInstallPlugin(t *testing.T) {
-	// TODO(ilgooz): remove this setup func to use existent setupPluginApiTest().
-	// following setupTest() func is a modified version of setupPluginApiTest().
-	// we need a modified version of setupPluginApiTest() because it wasn't possible to use it directly here
+	// TODO(ilgooz): remove this setup func to use existent setupPluginAPITest().
+	// following setupTest() func is a modified version of setupPluginAPITest().
+	// we need a modified version of setupPluginAPITest() because it wasn't possible to use it directly here
 	// since it removes plugin dirs right after it returns, does not update App configs with the plugin
 	// dirs and this behavior tends to break this test as a result.
 	setupTest := func(t *testing.T, pluginCode string, pluginManifest string, pluginID string, app *App, c *request.Context) (func(), string) {
-		pluginDir, err := ioutil.TempDir("", "")
+		pluginDir, err := os.MkdirTemp("", "")
 		require.NoError(t, err)
-		webappPluginDir, err := ioutil.TempDir("", "")
+		webappPluginDir, err := os.MkdirTemp("", "")
 		require.NoError(t, err)
 
 		app.UpdateConfig(func(cfg *model.Config) {
@@ -867,15 +937,15 @@ func TestInstallPlugin(t *testing.T) {
 			return app.NewPluginAPI(c, manifest)
 		}
 
-		env, err := plugin.NewEnvironment(newPluginAPI, NewDriverImpl(app.srv), pluginDir, webappPluginDir, app.Log(), nil)
+		env, err := plugin.NewEnvironment(newPluginAPI, NewDriverImpl(app.Srv()), pluginDir, webappPluginDir, app.Log(), nil)
 		require.NoError(t, err)
 
-		app.SetPluginsEnvironment(env)
+		app.ch.SetPluginsEnvironment(env)
 
 		backend := filepath.Join(pluginDir, pluginID, "backend.exe")
 		utils.CompileGo(t, pluginCode, backend)
 
-		ioutil.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(pluginManifest), 0600)
+		os.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(pluginManifest), 0600)
 		manifest, activated, reterr := env.Activate(pluginID)
 		require.NoError(t, reterr)
 		require.NotNil(t, manifest)
@@ -898,7 +968,7 @@ func TestInstallPlugin(t *testing.T) {
 	th.App.UpdateConfig(func(cfg *model.Config) {
 		*cfg.PluginSettings.Enable = true
 		*cfg.PluginSettings.EnableUploads = true
-		cfg.PluginSettings.Plugins["testinstallplugin"] = map[string]interface{}{
+		cfg.PluginSettings.Plugins["testinstallplugin"] = map[string]any{
 			"DownloadURL": ts.URL + "/testplugin.tar.gz",
 		}
 	})
@@ -950,7 +1020,7 @@ func TestInstallPlugin(t *testing.T) {
 		}
 
 	`,
-		`{"id": "testinstallplugin", "backend": {"executable": "backend.exe"}, "settings_schema": {
+		`{"id": "testinstallplugin", "server": {"executable": "backend.exe"}, "settings_schema": {
 		"settings": [
 			{
 				"key": "DownloadURL",
@@ -1057,7 +1127,7 @@ func TestPluginAPIRemoveTeamIcon(t *testing.T) {
 }
 
 func pluginAPIHookTest(t *testing.T, th *TestHelper, fileName string, id string, settingsSchema string) error {
-	data, err := ioutil.ReadFile(fileName)
+	data, err := os.ReadFile(fileName)
 	if err != nil {
 		return err
 	}
@@ -1066,9 +1136,9 @@ func pluginAPIHookTest(t *testing.T, th *TestHelper, fileName string, id string,
 	if settingsSchema != "" {
 		schema = settingsSchema
 	}
-	th.App.srv.sqlStore = th.GetSqlStore()
-	setupPluginApiTest(t, code,
-		fmt.Sprintf(`{"id": "%v", "backend": {"executable": "backend.exe"}, "settings_schema": %v}`, id, schema),
+	th.App.ch.srv.platform.SetSqlStore(th.GetSqlStore()) // TODO: platform: check if necessary
+	setupPluginAPITest(t, code,
+		fmt.Sprintf(`{"id": "%v", "server": {"executable": "backend.exe"}, "settings_schema": %v}`, id, schema),
 		id, th.App, th.Context)
 	hooks, err := th.App.GetPluginsEnvironment().HooksForPlugin(id)
 	require.NoError(t, err)
@@ -1077,6 +1147,7 @@ func pluginAPIHookTest(t *testing.T, th *TestHelper, fileName string, id string,
 	if ret != "OK" {
 		return errors.New(ret)
 	}
+
 	return nil
 }
 
@@ -1091,7 +1162,7 @@ func TestBasicAPIPlugins(t *testing.T) {
 	defaultSchema := getDefaultPluginSettingsSchema()
 	testFolder, found := fileutils.FindDir("mattermost-server/app/plugin_api_tests")
 	require.True(t, found, "Cannot read find app folder")
-	dirs, err := ioutil.ReadDir(testFolder)
+	dirs, err := os.ReadDir(testFolder)
 	require.NoError(t, err, "Cannot read test folder %v", testFolder)
 	for _, dir := range dirs {
 		d := dir.Name()
@@ -1277,7 +1348,6 @@ func TestPluginCreateBot(t *testing.T) {
 		Description: "bot2",
 	})
 	require.NotNil(t, err)
-
 }
 
 func TestPluginCreatePostWithUploadedFile(t *testing.T) {
@@ -1291,7 +1361,7 @@ func TestPluginCreatePostWithUploadedFile(t *testing.T) {
 	fileInfo, err := api.UploadFile(data, channelID, filename)
 	require.Nil(t, err)
 	defer func() {
-		th.App.Srv().Store.FileInfo().PermanentDelete(fileInfo.Id)
+		th.App.Srv().Store().FileInfo().PermanentDelete(fileInfo.Id)
 		th.App.RemoveFile(fileInfo.Path)
 	}()
 
@@ -1312,6 +1382,25 @@ func TestPluginCreatePostWithUploadedFile(t *testing.T) {
 	actualPost, err := api.GetPost(post.Id)
 	require.Nil(t, err)
 	assert.Equal(t, model.StringArray{fileInfo.Id}, actualPost.FileIds)
+}
+
+func TestPluginCreatePostAddsFromPluginProp(t *testing.T) {
+	th := Setup(t).InitBasic()
+	defer th.TearDown()
+	api := th.SetupPluginAPI()
+
+	channelID := th.BasicChannel.Id
+	userID := th.BasicUser.Id
+	post, err := api.CreatePost(&model.Post{
+		Message:   "test",
+		ChannelId: channelID,
+		UserId:    userID,
+	})
+	require.Nil(t, err)
+
+	actualPost, err := api.GetPost(post.Id)
+	require.Nil(t, err)
+	assert.Equal(t, "true", actualPost.GetProp("from_plugin"))
 }
 
 func TestPluginAPIGetConfig(t *testing.T) {
@@ -1404,7 +1493,7 @@ func TestInterpluginPluginHTTP(t *testing.T) {
 	th := Setup(t)
 	defer th.TearDown()
 
-	setupMultiPluginApiTest(t,
+	setupMultiPluginAPITest(t,
 		[]string{`
 		package main
 
@@ -1454,7 +1543,7 @@ func TestInterpluginPluginHTTP(t *testing.T) {
 			"github.com/mattermost/mattermost-server/v6/model"
 			"bytes"
 			"net/http"
-			"io/ioutil"
+			"io"
 		)
 
 		type MyPlugin struct {
@@ -1476,7 +1565,7 @@ func TestInterpluginPluginHTTP(t *testing.T) {
 			if resp.Body == nil {
 				return nil, "Nil body"
 			}
-			respbody, err := ioutil.ReadAll(resp.Body)
+			respbody, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return nil, err.Error()
 			}
@@ -1511,8 +1600,8 @@ func TestInterpluginPluginHTTP(t *testing.T) {
 		`,
 		},
 		[]string{
-			`{"id": "testplugininterserver", "backend": {"executable": "backend.exe"}}`,
-			`{"id": "testplugininterclient", "backend": {"executable": "backend.exe"}}`,
+			`{"id": "testplugininterserver", "server": {"executable": "backend.exe"}}`,
+			`{"id": "testplugininterclient", "server": {"executable": "backend.exe"}}`,
 		},
 		[]string{
 			"testplugininterserver",
@@ -1529,16 +1618,16 @@ func TestInterpluginPluginHTTP(t *testing.T) {
 	assert.Equal(t, "ok", ret)
 }
 
-func TestApiMetrics(t *testing.T) {
+func TestAPIMetrics(t *testing.T) {
 	th := Setup(t)
 	defer th.TearDown()
 
 	t.Run("", func(t *testing.T) {
 		metricsMock := &mocks.MetricsInterface{}
 
-		pluginDir, err := ioutil.TempDir("", "")
+		pluginDir, err := os.MkdirTemp("", "")
 		require.NoError(t, err)
-		webappPluginDir, err := ioutil.TempDir("", "")
+		webappPluginDir, err := os.MkdirTemp("", "")
 		require.NoError(t, err)
 		defer os.RemoveAll(pluginDir)
 		defer os.RemoveAll(webappPluginDir)
@@ -1546,7 +1635,7 @@ func TestApiMetrics(t *testing.T) {
 		env, err := plugin.NewEnvironment(th.NewPluginAPI, NewDriverImpl(th.Server), pluginDir, webappPluginDir, th.App.Log(), metricsMock)
 		require.NoError(t, err)
 
-		th.App.SetPluginsEnvironment(env)
+		th.App.ch.SetPluginsEnvironment(env)
 
 		pluginID := model.NewId()
 		backend := filepath.Join(pluginDir, pluginID, "backend.exe")
@@ -1573,7 +1662,7 @@ func TestApiMetrics(t *testing.T) {
 	}
 `
 		utils.CompileGo(t, code, backend)
-		ioutil.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(`{"id": "`+pluginID+`", "backend": {"executable": "backend.exe"}}`), 0600)
+		os.WriteFile(filepath.Join(pluginDir, pluginID, "plugin.json"), []byte(`{"id": "`+pluginID+`", "server": {"executable": "backend.exe"}}`), 0600)
 
 		// Don't care about these mocks
 		metricsMock.On("ObservePluginHookDuration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
@@ -1581,7 +1670,7 @@ func TestApiMetrics(t *testing.T) {
 		metricsMock.On("ObservePluginMultiHookDuration", mock.Anything).Return()
 
 		// Setup mocks
-		metricsMock.On("ObservePluginApiDuration", pluginID, "UpdateUser", true, mock.Anything).Return()
+		metricsMock.On("ObservePluginAPIDuration", pluginID, "UpdateUser", true, mock.Anything).Return()
 
 		_, _, activationErr := env.Activate(pluginID)
 		require.NoError(t, activationErr)
@@ -1661,7 +1750,7 @@ func TestPluginHTTPConnHijack(t *testing.T) {
 	require.True(t, found, "Cannot find tests folder")
 	fullPath := path.Join(testFolder, "manual.test_http_hijack_plugin", "main.go")
 
-	pluginCode, err := ioutil.ReadFile(fullPath)
+	pluginCode, err := os.ReadFile(fullPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, pluginCode)
 
@@ -1683,7 +1772,7 @@ func TestPluginHTTPConnHijack(t *testing.T) {
 
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "OK", string(body))
 }
@@ -1696,7 +1785,7 @@ func TestPluginHTTPUpgradeWebSocket(t *testing.T) {
 	require.True(t, found, "Cannot find tests folder")
 	fullPath := path.Join(testFolder, "manual.test_http_upgrade_websocket_plugin", "main.go")
 
-	pluginCode, err := ioutil.ReadFile(fullPath)
+	pluginCode, err := os.ReadFile(fullPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, pluginCode)
 
@@ -1709,8 +1798,8 @@ func TestPluginHTTPUpgradeWebSocket(t *testing.T) {
 	require.NotEmpty(t, pluginID)
 
 	reqURL := fmt.Sprintf("ws://localhost:%d/plugins/%s", th.Server.ListenAddr.Port, pluginID)
-	wsc, appErr := model.NewWebSocketClient(reqURL, "")
-	require.Nil(t, appErr)
+	wsc, err := model.NewWebSocketClient(reqURL, "")
+	require.NoError(t, err)
 	require.NotNil(t, wsc)
 
 	wsc.Listen()
@@ -1720,7 +1809,7 @@ func TestPluginHTTPUpgradeWebSocket(t *testing.T) {
 	require.Equal(t, resp.Status, model.StatusOk)
 
 	for i := 0; i < 10; i++ {
-		wsc.SendMessage("custom_action", map[string]interface{}{"value": i})
+		wsc.SendMessage("custom_action", map[string]any{"value": i})
 		var resp *model.WebSocketResponse
 		select {
 		case resp = <-wsc.ResponseChannel:
@@ -1741,6 +1830,7 @@ type MockSlashCommandProvider struct {
 func (*MockSlashCommandProvider) GetTrigger() string {
 	return "mock"
 }
+
 func (*MockSlashCommandProvider) GetCommand(a *App, T i18n.TranslateFunc) *model.Command {
 	return &model.Command{
 		Trigger:          "mock",
@@ -1750,7 +1840,8 @@ func (*MockSlashCommandProvider) GetCommand(a *App, T i18n.TranslateFunc) *model
 		DisplayName:      "mock",
 	}
 }
-func (mscp *MockSlashCommandProvider) DoCommand(a *App, c *request.Context, args *model.CommandArgs, message string) *model.CommandResponse {
+
+func (mscp *MockSlashCommandProvider) DoCommand(a *App, c request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
 	mscp.Args = args
 	mscp.Message = message
 	return &model.CommandResponse{
@@ -1790,7 +1881,7 @@ func TestPluginAPISearchPostsInTeamByUser(t *testing.T) {
 	api := th.SetupPluginAPI()
 
 	basicPostText := &th.BasicPost.Message
-	unknwonTerm := "Unknown Message"
+	unknownTerm := "Unknown Message"
 
 	testCases := []struct {
 		description      string
@@ -1810,7 +1901,7 @@ func TestPluginAPISearchPostsInTeamByUser(t *testing.T) {
 			"doesn't match any posts",
 			th.BasicTeam.Id,
 			th.BasicUser.Id,
-			model.SearchParameter{Terms: &unknwonTerm},
+			model.SearchParameter{Terms: &unknownTerm},
 			0,
 		},
 		{
@@ -1913,5 +2004,16 @@ func TestPluginAPIUpdateCommand(t *testing.T) {
 	require.NoError(t, appErr)
 	require.Equal(t, "anothernewtriggeragain", newCmd4.Trigger)
 	require.Equal(t, team1.Id, newCmd4.TeamId)
+}
 
+func TestPluginAPIIsEnterpriseReady(t *testing.T) {
+	oldValue := model.BuildEnterpriseReady
+	defer func() { model.BuildEnterpriseReady = oldValue }()
+
+	model.BuildEnterpriseReady = "true"
+	th := Setup(t)
+	defer th.TearDown()
+	api := th.SetupPluginAPI()
+
+	assert.Equal(t, true, api.IsEnterpriseReady())
 }

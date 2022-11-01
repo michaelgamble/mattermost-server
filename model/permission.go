@@ -4,9 +4,12 @@
 package model
 
 const (
-	PermissionScopeSystem  = "system_scope"
-	PermissionScopeTeam    = "team_scope"
-	PermissionScopeChannel = "channel_scope"
+	PermissionScopeSystem   = "system_scope"
+	PermissionScopeTeam     = "team_scope"
+	PermissionScopeChannel  = "channel_scope"
+	PermissionScopeGroup    = "group_scope"
+	PermissionScopePlaybook = "playbook_scope"
+	PermissionScopeRun      = "run_scope"
 )
 
 type Permission struct {
@@ -70,6 +73,7 @@ var PermissionDeleteOthersEmojis *Permission
 var PermissionCreatePost *Permission
 var PermissionCreatePostPublic *Permission
 var PermissionCreatePostEphemeral *Permission
+var PermissionReadDeletedPosts *Permission
 var PermissionEditPost *Permission
 var PermissionEditOthersPosts *Permission
 var PermissionDeletePost *Permission
@@ -108,7 +112,7 @@ var PermissionCreateComplianceExportJob *Permission
 var PermissionReadComplianceExportJob *Permission
 var PermissionReadAudits *Permission
 var PermissionTestElasticsearch *Permission
-var PermissionTestSiteUrl *Permission
+var PermissionTestSiteURL *Permission
 var PermissionTestS3 *Permission
 var PermissionReloadConfig *Permission
 var PermissionInvalidateCaches *Permission
@@ -202,8 +206,8 @@ var PermissionSysconsoleWriteEnvironmentFileStorage *Permission
 var PermissionSysconsoleReadEnvironmentImageProxy *Permission
 var PermissionSysconsoleWriteEnvironmentImageProxy *Permission
 
-var PermissionSysconsoleReadEnvironmentSmtp *Permission
-var PermissionSysconsoleWriteEnvironmentSmtp *Permission
+var PermissionSysconsoleReadEnvironmentSMTP *Permission
+var PermissionSysconsoleWriteEnvironmentSMTP *Permission
 
 var PermissionSysconsoleReadEnvironmentPushNotificationServer *Permission
 var PermissionSysconsoleWriteEnvironmentPushNotificationServer *Permission
@@ -331,10 +335,37 @@ var PermissionSysconsoleWriteExperimentalFeatureFlags *Permission
 var PermissionSysconsoleReadExperimentalBleve *Permission
 var PermissionSysconsoleWriteExperimentalBleve *Permission
 
+var PermissionPublicPlaybookCreate *Permission
+var PermissionPublicPlaybookManageProperties *Permission
+var PermissionPublicPlaybookManageMembers *Permission
+var PermissionPublicPlaybookManageRoles *Permission
+var PermissionPublicPlaybookView *Permission
+var PermissionPublicPlaybookMakePrivate *Permission
+
+var PermissionPrivatePlaybookCreate *Permission
+var PermissionPrivatePlaybookManageProperties *Permission
+var PermissionPrivatePlaybookManageMembers *Permission
+var PermissionPrivatePlaybookManageRoles *Permission
+var PermissionPrivatePlaybookView *Permission
+var PermissionPrivatePlaybookMakePublic *Permission
+
+var PermissionRunCreate *Permission
+var PermissionRunManageProperties *Permission
+var PermissionRunManageMembers *Permission
+var PermissionRunView *Permission
+
+var PermissionSysconsoleReadProductsBoards *Permission
+var PermissionSysconsoleWriteProductsBoards *Permission
+
 // General permission that encompasses all system admin functions
 // in the future this could be broken up to allow access to some
 // admin functions but not others
 var PermissionManageSystem *Permission
+
+var PermissionCreateCustomGroup *Permission
+var PermissionManageCustomGroupMembers *Permission
+var PermissionEditCustomGroup *Permission
+var PermissionDeleteCustomGroup *Permission
 
 var AllPermissions []*Permission
 var DeprecatedPermissions []*Permission
@@ -681,6 +712,12 @@ func initializePermissions() {
 		"authentication.permissions.create_post_ephemeral.description",
 		PermissionScopeChannel,
 	}
+	PermissionReadDeletedPosts = &Permission{
+		"read_deleted_posts",
+		"authentication.permissions.read_deleted_posts.name",
+		"authentication.permissions.read_deleted_posts.description",
+		PermissionScopeChannel,
+	}
 	PermissionEditPost = &Permission{
 		"edit_post",
 		"authentication.permissions.edit_post.name",
@@ -909,7 +946,7 @@ func initializePermissions() {
 		PermissionScopeSystem,
 	}
 
-	PermissionTestSiteUrl = &Permission{
+	PermissionTestSiteURL = &Permission{
 		"test_site_url",
 		"",
 		"",
@@ -1366,13 +1403,13 @@ func initializePermissions() {
 		"",
 		PermissionScopeSystem,
 	}
-	PermissionSysconsoleReadEnvironmentSmtp = &Permission{
+	PermissionSysconsoleReadEnvironmentSMTP = &Permission{
 		"sysconsole_read_environment_smtp",
 		"",
 		"",
 		PermissionScopeSystem,
 	}
-	PermissionSysconsoleWriteEnvironmentSmtp = &Permission{
+	PermissionSysconsoleWriteEnvironmentSMTP = &Permission{
 		"sysconsole_write_environment_smtp",
 		"",
 		"",
@@ -1895,6 +1932,160 @@ func initializePermissions() {
 		PermissionScopeSystem,
 	}
 
+	PermissionCreateCustomGroup = &Permission{
+		"create_custom_group",
+		"authentication.permissions.create_custom_group.name",
+		"authentication.permissions.create_custom_group.description",
+		PermissionScopeSystem,
+	}
+
+	PermissionManageCustomGroupMembers = &Permission{
+		"manage_custom_group_members",
+		"authentication.permissions.manage_custom_group_members.name",
+		"authentication.permissions.manage_custom_group_members.description",
+		PermissionScopeGroup,
+	}
+
+	PermissionEditCustomGroup = &Permission{
+		"edit_custom_group",
+		"authentication.permissions.edit_custom_group.name",
+		"authentication.permissions.edit_custom_group.description",
+		PermissionScopeGroup,
+	}
+
+	PermissionDeleteCustomGroup = &Permission{
+		"delete_custom_group",
+		"authentication.permissions.delete_custom_group.name",
+		"authentication.permissions.delete_custom_group.description",
+		PermissionScopeGroup,
+	}
+
+	// Playbooks
+	PermissionPublicPlaybookCreate = &Permission{
+		"playbook_public_create",
+		"",
+		"",
+		PermissionScopeTeam,
+	}
+
+	PermissionPublicPlaybookManageProperties = &Permission{
+		"playbook_public_manage_properties",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPublicPlaybookManageMembers = &Permission{
+		"playbook_public_manage_members",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPublicPlaybookManageRoles = &Permission{
+		"playbook_public_manage_roles",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPublicPlaybookView = &Permission{
+		"playbook_public_view",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPublicPlaybookMakePrivate = &Permission{
+		"playbook_public_make_private",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookCreate = &Permission{
+		"playbook_private_create",
+		"",
+		"",
+		PermissionScopeTeam,
+	}
+
+	PermissionPrivatePlaybookManageProperties = &Permission{
+		"playbook_private_manage_properties",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookManageMembers = &Permission{
+		"playbook_private_manage_members",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookManageRoles = &Permission{
+		"playbook_private_manage_roles",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookView = &Permission{
+		"playbook_private_view",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionPrivatePlaybookMakePublic = &Permission{
+		"playbook_private_make_public",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionRunCreate = &Permission{
+		"run_create",
+		"",
+		"",
+		PermissionScopePlaybook,
+	}
+
+	PermissionRunManageProperties = &Permission{
+		"run_manage_properties",
+		"",
+		"",
+		PermissionScopeRun,
+	}
+
+	PermissionRunManageMembers = &Permission{
+		"run_manage_members",
+		"",
+		"",
+		PermissionScopeRun,
+	}
+
+	PermissionRunView = &Permission{
+		"run_view",
+		"",
+		"",
+		PermissionScopeRun,
+	}
+
+	PermissionSysconsoleReadProductsBoards = &Permission{
+		"sysconsole_read_products_boards",
+		"",
+		"",
+		PermissionScopeSystem,
+	}
+	PermissionSysconsoleWriteProductsBoards = &Permission{
+		"sysconsole_write_products_boards",
+		"",
+		"",
+		PermissionScopeSystem,
+	}
+
 	SysconsoleReadPermissions = []*Permission{
 		PermissionSysconsoleReadAboutEditionAndLicense,
 		PermissionSysconsoleReadBilling,
@@ -1912,7 +2103,7 @@ func initializePermissions() {
 		PermissionSysconsoleReadEnvironmentElasticsearch,
 		PermissionSysconsoleReadEnvironmentFileStorage,
 		PermissionSysconsoleReadEnvironmentImageProxy,
-		PermissionSysconsoleReadEnvironmentSmtp,
+		PermissionSysconsoleReadEnvironmentSMTP,
 		PermissionSysconsoleReadEnvironmentPushNotificationServer,
 		PermissionSysconsoleReadEnvironmentHighAvailability,
 		PermissionSysconsoleReadEnvironmentRateLimiting,
@@ -1950,6 +2141,7 @@ func initializePermissions() {
 		PermissionSysconsoleReadExperimentalFeatures,
 		PermissionSysconsoleReadExperimentalFeatureFlags,
 		PermissionSysconsoleReadExperimentalBleve,
+		PermissionSysconsoleReadProductsBoards,
 	}
 
 	SysconsoleWritePermissions = []*Permission{
@@ -1969,7 +2161,7 @@ func initializePermissions() {
 		PermissionSysconsoleWriteEnvironmentElasticsearch,
 		PermissionSysconsoleWriteEnvironmentFileStorage,
 		PermissionSysconsoleWriteEnvironmentImageProxy,
-		PermissionSysconsoleWriteEnvironmentSmtp,
+		PermissionSysconsoleWriteEnvironmentSMTP,
 		PermissionSysconsoleWriteEnvironmentPushNotificationServer,
 		PermissionSysconsoleWriteEnvironmentHighAvailability,
 		PermissionSysconsoleWriteEnvironmentRateLimiting,
@@ -2007,6 +2199,7 @@ func initializePermissions() {
 		PermissionSysconsoleWriteExperimentalFeatures,
 		PermissionSysconsoleWriteExperimentalFeatureFlags,
 		PermissionSysconsoleWriteExperimentalBleve,
+		PermissionSysconsoleWriteProductsBoards,
 	}
 
 	SystemScopedPermissionsMinusSysconsole := []*Permission{
@@ -2048,7 +2241,7 @@ func initializePermissions() {
 		PermissionCreateComplianceExportJob,
 		PermissionReadComplianceExportJob,
 		PermissionReadAudits,
-		PermissionTestSiteUrl,
+		PermissionTestSiteURL,
 		PermissionTestElasticsearch,
 		PermissionTestS3,
 		PermissionReloadConfig,
@@ -2082,6 +2275,7 @@ func initializePermissions() {
 		PermissionGetLogs,
 		PermissionReadLicenseInformation,
 		PermissionManageLicenseInformation,
+		PermissionCreateCustomGroup,
 	}
 
 	TeamScopedPermissions := []*Permission{
@@ -2108,6 +2302,8 @@ func initializePermissions() {
 		PermissionViewTeam,
 		PermissionViewMembers,
 		PermissionInviteGuest,
+		PermissionPublicPlaybookCreate,
+		PermissionPrivatePlaybookCreate,
 	}
 
 	ChannelScopedPermissions := []*Permission{
@@ -2131,12 +2327,19 @@ func initializePermissions() {
 		PermissionCreatePost,
 		PermissionCreatePostPublic,
 		PermissionCreatePostEphemeral,
+		PermissionReadDeletedPosts,
 		PermissionEditPost,
 		PermissionEditOthersPosts,
 		PermissionDeletePost,
 		PermissionDeleteOthersPosts,
 		PermissionUseChannelMentions,
 		PermissionUseGroupMentions,
+	}
+
+	GroupScopedPermissions := []*Permission{
+		PermissionManageCustomGroupMembers,
+		PermissionEditCustomGroup,
+		PermissionDeleteCustomGroup,
 	}
 
 	DeprecatedPermissions = []*Permission{
@@ -2163,12 +2366,35 @@ func initializePermissions() {
 		PermissionSysconsoleWriteCompliance,
 	}
 
+	PlaybookScopedPermissions := []*Permission{
+		PermissionPublicPlaybookManageProperties,
+		PermissionPublicPlaybookManageMembers,
+		PermissionPublicPlaybookManageRoles,
+		PermissionPublicPlaybookView,
+		PermissionPublicPlaybookMakePrivate,
+		PermissionPrivatePlaybookManageProperties,
+		PermissionPrivatePlaybookManageMembers,
+		PermissionPrivatePlaybookManageRoles,
+		PermissionPrivatePlaybookView,
+		PermissionPrivatePlaybookMakePublic,
+		PermissionRunCreate,
+	}
+
+	RunScopedPermissions := []*Permission{
+		PermissionRunManageProperties,
+		PermissionRunManageMembers,
+		PermissionRunView,
+	}
+
 	AllPermissions = []*Permission{}
 	AllPermissions = append(AllPermissions, SystemScopedPermissionsMinusSysconsole...)
 	AllPermissions = append(AllPermissions, TeamScopedPermissions...)
 	AllPermissions = append(AllPermissions, ChannelScopedPermissions...)
 	AllPermissions = append(AllPermissions, SysconsoleReadPermissions...)
 	AllPermissions = append(AllPermissions, SysconsoleWritePermissions...)
+	AllPermissions = append(AllPermissions, GroupScopedPermissions...)
+	AllPermissions = append(AllPermissions, PlaybookScopedPermissions...)
+	AllPermissions = append(AllPermissions, RunScopedPermissions...)
 
 	ChannelModeratedPermissions = []string{
 		PermissionCreatePost.Id,

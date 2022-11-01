@@ -4,6 +4,7 @@
 package slashcommands
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/mattermost/mattermost-server/v6/app"
@@ -54,11 +55,11 @@ func (*CollapseProvider) GetCommand(a *app.App, T i18n.TranslateFunc) *model.Com
 	}
 }
 
-func (*ExpandProvider) DoCommand(a *app.App, c *request.Context, args *model.CommandArgs, message string) *model.CommandResponse {
+func (*ExpandProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
 	return setCollapsePreference(a, args, false)
 }
 
-func (*CollapseProvider) DoCommand(a *app.App, c *request.Context, args *model.CommandArgs, message string) *model.CommandResponse {
+func (*CollapseProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
 	return setCollapsePreference(a, args, true)
 }
 
@@ -70,12 +71,17 @@ func setCollapsePreference(a *app.App, args *model.CommandArgs, isCollapse bool)
 		Value:    strconv.FormatBool(isCollapse),
 	}
 
-	if err := a.Srv().Store.Preference().Save(&model.Preferences{pref}); err != nil {
-		return &model.CommandResponse{Text: args.T("api.command_expand_collapse.fail.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
+	if err := a.Srv().Store().Preference().Save(model.Preferences{pref}); err != nil {
+		return &model.CommandResponse{Text: args.T("api.command_expand_collapse.fail.app_error") + err.Error(), ResponseType: model.CommandResponseTypeEphemeral}
 	}
 
-	socketMessage := model.NewWebSocketEvent(model.WebsocketEventPreferenceChanged, "", "", args.UserId, nil)
-	socketMessage.Add("preference", pref.ToJson())
+	socketMessage := model.NewWebSocketEvent(model.WebsocketEventPreferenceChanged, "", "", args.UserId, nil, "")
+
+	prefJSON, err := json.Marshal(pref)
+	if err != nil {
+		return &model.CommandResponse{Text: args.T("api.marshal_error") + err.Error(), ResponseType: model.CommandResponseTypeEphemeral}
+	}
+	socketMessage.Add("preference", string(prefJSON))
 	a.Publish(socketMessage)
 
 	var rmsg string

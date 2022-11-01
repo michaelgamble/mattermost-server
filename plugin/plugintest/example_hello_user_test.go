@@ -5,7 +5,7 @@ package plugintest_test
 
 import (
 	"fmt"
-	"io/ioutil"
+	io "io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,18 +45,14 @@ func Example() {
 	api.On("GetUser", user.Id).Return(user, nil)
 	defer api.AssertExpectations(t)
 
-	helpers := &plugintest.Helpers{}
-	defer helpers.AssertExpectations(t)
-
 	p := &HelloUserPlugin{}
 	p.SetAPI(api)
-	p.SetHelpers(helpers)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Add("Mattermost-User-Id", user.Id)
 	p.ServeHTTP(&plugin.Context{}, w, r)
-	body, err := ioutil.ReadAll(w.Result().Body)
+	body, err := io.ReadAll(w.Result().Body)
 	require.NoError(t, err)
 	assert.Equal(t, "Welcome back, billybob!", string(body))
 }

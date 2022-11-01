@@ -4,37 +4,40 @@
 package api4
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/mattermost/mattermost-server/v6/audit"
 	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost-server/v6/shared/mlog"
 )
 
 func (api *API) InitCommand() {
-	api.BaseRoutes.Commands.Handle("", api.ApiSessionRequired(createCommand)).Methods("POST")
-	api.BaseRoutes.Commands.Handle("", api.ApiSessionRequired(listCommands)).Methods("GET")
-	api.BaseRoutes.Commands.Handle("/execute", api.ApiSessionRequired(executeCommand)).Methods("POST")
+	api.BaseRoutes.Commands.Handle("", api.APISessionRequired(createCommand)).Methods("POST")
+	api.BaseRoutes.Commands.Handle("", api.APISessionRequired(listCommands)).Methods("GET")
+	api.BaseRoutes.Commands.Handle("/execute", api.APISessionRequired(executeCommand)).Methods("POST")
 
-	api.BaseRoutes.Command.Handle("", api.ApiSessionRequired(getCommand)).Methods("GET")
-	api.BaseRoutes.Command.Handle("", api.ApiSessionRequired(updateCommand)).Methods("PUT")
-	api.BaseRoutes.Command.Handle("/move", api.ApiSessionRequired(moveCommand)).Methods("PUT")
-	api.BaseRoutes.Command.Handle("", api.ApiSessionRequired(deleteCommand)).Methods("DELETE")
+	api.BaseRoutes.Command.Handle("", api.APISessionRequired(getCommand)).Methods("GET")
+	api.BaseRoutes.Command.Handle("", api.APISessionRequired(updateCommand)).Methods("PUT")
+	api.BaseRoutes.Command.Handle("/move", api.APISessionRequired(moveCommand)).Methods("PUT")
+	api.BaseRoutes.Command.Handle("", api.APISessionRequired(deleteCommand)).Methods("DELETE")
 
-	api.BaseRoutes.Team.Handle("/commands/autocomplete", api.ApiSessionRequired(listAutocompleteCommands)).Methods("GET")
-	api.BaseRoutes.Team.Handle("/commands/autocomplete_suggestions", api.ApiSessionRequired(listCommandAutocompleteSuggestions)).Methods("GET")
-	api.BaseRoutes.Command.Handle("/regen_token", api.ApiSessionRequired(regenCommandToken)).Methods("PUT")
+	api.BaseRoutes.Team.Handle("/commands/autocomplete", api.APISessionRequired(listAutocompleteCommands)).Methods("GET")
+	api.BaseRoutes.Team.Handle("/commands/autocomplete_suggestions", api.APISessionRequired(listCommandAutocompleteSuggestions)).Methods("GET")
+	api.BaseRoutes.Command.Handle("/regen_token", api.APISessionRequired(regenCommandToken)).Methods("PUT")
 }
 
 func createCommand(c *Context, w http.ResponseWriter, r *http.Request) {
-	cmd := model.CommandFromJson(r.Body)
-	if cmd == nil {
-		c.SetInvalidParam("command")
+	var cmd model.Command
+	if jsonErr := json.NewDecoder(r.Body).Decode(&cmd); jsonErr != nil {
+		c.SetInvalidParamWithErr("command", jsonErr)
 		return
 	}
 
 	auditRec := c.MakeAuditRecord("createCommand", audit.Fail)
+	auditRec.AddEventParameter("command", cmd)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 
@@ -45,7 +48,7 @@ func createCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	cmd.CreatorId = c.AppContext.Session().UserId
 
-	rcmd, err := c.App.CreateCommand(cmd)
+	rcmd, err := c.App.CreateCommand(&cmd)
 	if err != nil {
 		c.Err = err
 		return
@@ -54,9 +57,13 @@ func createCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 	auditRec.Success()
 	c.LogAudit("success")
 	auditRec.AddMeta("command", rcmd)
+	auditRec.AddEventResultState(rcmd)
+	auditRec.AddEventObjectType("command")
 
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(rcmd.ToJson()))
+	if err := json.NewEncoder(w).Encode(rcmd); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func updateCommand(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -65,13 +72,14 @@ func updateCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := model.CommandFromJson(r.Body)
-	if cmd == nil || cmd.Id != c.Params.CommandId {
-		c.SetInvalidParam("command")
+	var cmd model.Command
+	if jsonErr := json.NewDecoder(r.Body).Decode(&cmd); jsonErr != nil || cmd.Id != c.Params.CommandId {
+		c.SetInvalidParamWithErr("command", jsonErr)
 		return
 	}
 
 	auditRec := c.MakeAuditRecord("updateCommand", audit.Fail)
+	auditRec.AddEventParameter("command", cmd)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 
@@ -102,16 +110,20 @@ func updateCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rcmd, err := c.App.UpdateCommand(oldCmd, cmd)
+	rcmd, err := c.App.UpdateCommand(oldCmd, &cmd)
 	if err != nil {
 		c.Err = err
 		return
 	}
 
+	auditRec.AddEventResultState(rcmd)
+	auditRec.AddEventObjectType("command")
 	auditRec.Success()
 	c.LogAudit("success")
 
-	w.Write([]byte(rcmd.ToJson()))
+	if err := json.NewEncoder(w).Encode(rcmd); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func moveCommand(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -120,13 +132,14 @@ func moveCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmr, err := model.CommandMoveRequestFromJson(r.Body)
-	if err != nil {
-		c.SetInvalidParam("team_id")
+	var cmr model.CommandMoveRequest
+	if jsonErr := json.NewDecoder(r.Body).Decode(&cmr); jsonErr != nil {
+		c.SetInvalidParamWithErr("team_id", jsonErr)
 		return
 	}
 
 	auditRec := c.MakeAuditRecord("moveCommand", audit.Fail)
+	auditRec.AddEventParameter("command_move_request", cmr)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 
@@ -163,6 +176,8 @@ func moveCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	auditRec.AddEventResultState(cmd)
+	auditRec.AddEventObjectType("command")
 	auditRec.Success()
 	c.LogAudit("success")
 
@@ -176,6 +191,7 @@ func deleteCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	auditRec := c.MakeAuditRecord("deleteCommand", audit.Fail)
+	auditRec.AddEventParameter("command_id", c.Params.CommandId)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 
@@ -206,6 +222,8 @@ func deleteCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	auditRec.AddEventResultState(cmd)
+	auditRec.AddEventObjectType("command")
 	auditRec.Success()
 	c.LogAudit("success")
 
@@ -255,7 +273,9 @@ func listCommands(c *Context, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Write([]byte(model.CommandListToJson(commands)))
+	if err := json.NewEncoder(w).Encode(commands); err != nil {
+		c.Logger.Warn("Error writing response", mlog.Err(err))
+	}
 }
 
 func getCommand(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -284,13 +304,15 @@ func getCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.SetCommandNotFoundError()
 		return
 	}
-	w.Write([]byte(cmd.ToJson()))
+	if err := json.NewEncoder(w).Encode(cmd); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func executeCommand(c *Context, w http.ResponseWriter, r *http.Request) {
-	commandArgs := model.CommandArgsFromJson(r.Body)
-	if commandArgs == nil {
-		c.SetInvalidParam("command_args")
+	var commandArgs model.CommandArgs
+	if jsonErr := json.NewDecoder(r.Body).Decode(&commandArgs); jsonErr != nil {
+		c.SetInvalidParamWithErr("command_args", jsonErr)
 		return
 	}
 
@@ -301,15 +323,16 @@ func executeCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	auditRec := c.MakeAuditRecord("executeCommand", audit.Fail)
 	defer c.LogAuditRec(auditRec)
+	auditRec.AddEventParameter("command_args", commandArgs)
 	auditRec.AddMeta("commandargs", commandArgs)
 
 	// checks that user is a member of the specified channel, and that they have permission to use slash commands in it
-	if !c.App.SessionHasPermissionToChannel(*c.AppContext.Session(), commandArgs.ChannelId, model.PermissionUseSlashCommands) {
+	if !c.App.SessionHasPermissionToChannel(c.AppContext, *c.AppContext.Session(), commandArgs.ChannelId, model.PermissionUseSlashCommands) {
 		c.SetPermissionError(model.PermissionUseSlashCommands)
 		return
 	}
 
-	channel, err := c.App.GetChannel(commandArgs.ChannelId)
+	channel, err := c.App.GetChannel(c.AppContext, commandArgs.ChannelId)
 	if err != nil {
 		c.Err = err
 		return
@@ -335,16 +358,18 @@ func executeCommand(c *Context, w http.ResponseWriter, r *http.Request) {
 	commandArgs.SiteURL = c.GetSiteURLHeader()
 	commandArgs.Session = *c.AppContext.Session()
 
-	auditRec.AddMeta("commandargs", commandArgs) // overwrite in case teamid changed
+	auditRec.AddMeta("commandargs", commandArgs) // overwrite in case teamid changed. TODO do we need to log this too? is the original commandArgs not enough
 
-	response, err := c.App.ExecuteCommand(c.AppContext, commandArgs)
+	response, err := c.App.ExecuteCommand(c.AppContext, &commandArgs)
 	if err != nil {
 		c.Err = err
 		return
 	}
 
 	auditRec.Success()
-	w.Write([]byte(response.ToJson()))
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func listAutocompleteCommands(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -364,7 +389,9 @@ func listAutocompleteCommands(c *Context, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Write([]byte(model.CommandListToJson(commands)))
+	if err := json.NewEncoder(w).Encode(commands); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func listCommandAutocompleteSuggestions(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -390,9 +417,9 @@ func listCommandAutocompleteSuggestions(c *Context, w http.ResponseWriter, r *ht
 	}
 	userInput = strings.TrimPrefix(userInput, "/")
 
-	commands, err := c.App.ListAutocompleteCommands(c.Params.TeamId, c.AppContext.T)
-	if err != nil {
-		c.Err = err
+	commands, appErr := c.App.ListAutocompleteCommands(c.Params.TeamId, c.AppContext.T)
+	if appErr != nil {
+		c.Err = appErr
 		return
 	}
 
@@ -400,7 +427,6 @@ func listCommandAutocompleteSuggestions(c *Context, w http.ResponseWriter, r *ht
 		ChannelId: query.Get("channel_id"),
 		TeamId:    c.Params.TeamId,
 		RootId:    query.Get("root_id"),
-		ParentId:  query.Get("parent_id"),
 		UserId:    c.AppContext.Session().UserId,
 		T:         c.AppContext.T,
 		Session:   *c.AppContext.Session(),
@@ -410,7 +436,12 @@ func listCommandAutocompleteSuggestions(c *Context, w http.ResponseWriter, r *ht
 
 	suggestions := c.App.GetSuggestions(c.AppContext, commandArgs, commands, roleId)
 
-	w.Write(model.AutocompleteSuggestionsToJSON(suggestions))
+	js, err := json.Marshal(suggestions)
+	if err != nil {
+		c.Err = model.NewAppError("listCommandAutocompleteSuggestions", "api.marshal_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+	w.Write(js)
 }
 
 func regenCommandToken(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -430,6 +461,7 @@ func regenCommandToken(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRec.AddMeta("command", cmd)
+	auditRec.AddEventParameter("command_id", c.Params.CommandId)
 
 	if !c.App.SessionHasPermissionToTeam(*c.AppContext.Session(), cmd.TeamId, model.PermissionManageSlashCommands) {
 		c.LogAudit("fail - inappropriate permissions")
@@ -457,5 +489,5 @@ func regenCommandToken(c *Context, w http.ResponseWriter, r *http.Request) {
 	resp := make(map[string]string)
 	resp["token"] = rcmd.Token
 
-	w.Write([]byte(model.MapToJson(resp)))
+	w.Write([]byte(model.MapToJSON(resp)))
 }

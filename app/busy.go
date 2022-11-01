@@ -4,6 +4,8 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,11 +111,12 @@ func (b *Busy) notifyServerBusyChange(sbs *model.ServerBusyState) {
 	if b.cluster == nil {
 		return
 	}
+	buf, _ := json.Marshal(sbs)
 	msg := &model.ClusterMessage{
 		Event:            model.ClusterEventBusyStateChanged,
 		SendType:         model.ClusterSendReliable,
 		WaitForAllToSend: true,
-		Data:             sbs.ToJson(),
+		Data:             buf,
 	}
 	b.cluster.SendClusterMessage(msg)
 }
@@ -134,7 +137,7 @@ func (b *Busy) ClusterEventChanged(sbs *model.ServerBusyState) {
 	}
 }
 
-func (b *Busy) ToJson() string {
+func (b *Busy) ToJSON() ([]byte, error) {
 	b.mux.RLock()
 	defer b.mux.RUnlock()
 
@@ -143,5 +146,10 @@ func (b *Busy) ToJson() string {
 		Expires:   b.expires.Unix(),
 		ExpiresTS: b.expires.UTC().Format(TimestampFormat),
 	}
-	return sbs.ToJson()
+	sbsJSON, jsonErr := json.Marshal(sbs)
+	if jsonErr != nil {
+		return []byte{}, fmt.Errorf("failed to encode server busy state to JSON: %w", jsonErr)
+	}
+
+	return sbsJSON, nil
 }

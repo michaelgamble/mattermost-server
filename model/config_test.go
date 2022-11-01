@@ -6,6 +6,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 
@@ -31,6 +32,13 @@ func TestConfigDefaults(t *testing.T) {
 		var recursivelyUninitialize func(*Config, string, reflect.Value)
 		recursivelyUninitialize = func(config *Config, name string, v reflect.Value) {
 			if v.Type().Kind() == reflect.Ptr {
+				// Ignoring these 2 settings.
+				// TODO: remove them completely in v8.0.
+				if name == "config.BleveSettings.BulkIndexingTimeWindowSeconds" ||
+					name == "config.ElasticsearchSettings.BulkIndexingTimeWindowSeconds" {
+					return
+				}
+
 				// Set every pointer we find in the tree to nil
 				v.Set(reflect.Zero(v.Type()))
 				require.True(t, v.IsNil())
@@ -73,7 +81,7 @@ func TestConfigEnableDeveloper(t *testing.T) {
 		EnableDeveloper *bool
 		ExpectedSiteURL string
 	}{
-		{"enable developer is true", NewBool(true), ServiceSettingsDefaultSiteUrl},
+		{"enable developer is true", NewBool(true), ServiceSettingsDefaultSiteURL},
 		{"enable developer is false", NewBool(false), ""},
 		{"enable developer is nil", nil, ""},
 	}
@@ -144,25 +152,25 @@ func TestConfigIsValidDefaultAlgorithms(t *testing.T) {
 	*c1.SamlSettings.Verify = false
 	*c1.SamlSettings.Encrypt = false
 
-	*c1.SamlSettings.IdpUrl = "http://test.url.com"
-	*c1.SamlSettings.IdpDescriptorUrl = "http://test.url.com"
+	*c1.SamlSettings.IdpURL = "http://test.url.com"
+	*c1.SamlSettings.IdpDescriptorURL = "http://test.url.com"
 	*c1.SamlSettings.IdpCertificateFile = "certificatefile"
 	*c1.SamlSettings.ServiceProviderIdentifier = "http://test.url.com"
 	*c1.SamlSettings.EmailAttribute = "Email"
 	*c1.SamlSettings.UsernameAttribute = "Username"
 
-	err := c1.SamlSettings.isValid()
-	require.Nil(t, err)
+	appErr := c1.SamlSettings.isValid()
+	require.Nil(t, appErr)
 }
 
 func TestConfigServiceProviderDefault(t *testing.T) {
 	c1 := &Config{
-		SamlSettings: *&SamlSettings{
+		SamlSettings: SamlSettings{
 			Enable:             NewBool(true),
 			Verify:             NewBool(false),
 			Encrypt:            NewBool(false),
-			IdpUrl:             NewString("http://test.url.com"),
-			IdpDescriptorUrl:   NewString("http://test2.url.com"),
+			IdpURL:             NewString("http://test.url.com"),
+			IdpDescriptorURL:   NewString("http://test2.url.com"),
 			IdpCertificateFile: NewString("certificatefile"),
 			EmailAttribute:     NewString("Email"),
 			UsernameAttribute:  NewString("Username"),
@@ -170,10 +178,10 @@ func TestConfigServiceProviderDefault(t *testing.T) {
 	}
 
 	c1.SetDefaults()
-	assert.Equal(t, *c1.SamlSettings.ServiceProviderIdentifier, *c1.SamlSettings.IdpDescriptorUrl)
+	assert.Equal(t, *c1.SamlSettings.ServiceProviderIdentifier, *c1.SamlSettings.IdpDescriptorURL)
 
-	err := c1.SamlSettings.isValid()
-	require.Nil(t, err)
+	appErr := c1.SamlSettings.isValid()
+	require.Nil(t, appErr)
 }
 
 func TestConfigIsValidFakeAlgorithm(t *testing.T) {
@@ -184,9 +192,9 @@ func TestConfigIsValidFakeAlgorithm(t *testing.T) {
 	*c1.SamlSettings.Verify = false
 	*c1.SamlSettings.Encrypt = false
 
-	*c1.SamlSettings.IdpUrl = "http://test.url.com"
-	*c1.SamlSettings.IdpDescriptorUrl = "http://test.url.com"
-	*c1.SamlSettings.IdpMetadataUrl = "http://test.url.com"
+	*c1.SamlSettings.IdpURL = "http://test.url.com"
+	*c1.SamlSettings.IdpDescriptorURL = "http://test.url.com"
+	*c1.SamlSettings.IdpMetadataURL = "http://test.url.com"
 	*c1.SamlSettings.IdpCertificateFile = "certificatefile"
 	*c1.SamlSettings.ServiceProviderIdentifier = "http://test.url.com"
 	*c1.SamlSettings.EmailAttribute = "Email"
@@ -194,17 +202,17 @@ func TestConfigIsValidFakeAlgorithm(t *testing.T) {
 
 	temp := *c1.SamlSettings.CanonicalAlgorithm
 	*c1.SamlSettings.CanonicalAlgorithm = "Fake Algorithm"
-	err := c1.SamlSettings.isValid()
-	require.NotNil(t, err)
+	appErr := c1.SamlSettings.isValid()
+	require.NotNil(t, appErr)
 
-	require.Equal(t, "model.config.is_valid.saml_canonical_algorithm.app_error", err.Message)
+	require.Equal(t, "model.config.is_valid.saml_canonical_algorithm.app_error", appErr.Message)
 	*c1.SamlSettings.CanonicalAlgorithm = temp
 
 	*c1.SamlSettings.SignatureAlgorithm = "Fake Algorithm"
-	err = c1.SamlSettings.isValid()
-	require.NotNil(t, err)
+	appErr = c1.SamlSettings.isValid()
+	require.NotNil(t, appErr)
 
-	require.Equal(t, "model.config.is_valid.saml_signature_algorithm.app_error", err.Message)
+	require.Equal(t, "model.config.is_valid.saml_signature_algorithm.app_error", appErr.Message)
 }
 
 func TestConfigOverwriteGuestSettings(t *testing.T) {
@@ -308,29 +316,29 @@ func TestConfigDefaultNPSPluginState(t *testing.T) {
 	})
 }
 
-func TestConfigDefaultIncidentManagementPluginState(t *testing.T) {
-	t.Run("should enable IncidentManagement plugin by default on enterprise-ready builds", func(t *testing.T) {
+func TestConfigDefaultPlaybooksPluginState(t *testing.T) {
+	t.Run("should enable Playbooks plugin by default on enterprise-ready builds", func(t *testing.T) {
 		BuildEnterpriseReady = "true"
 		c1 := Config{}
 		c1.SetDefaults()
 
-		assert.True(t, c1.PluginSettings.PluginStates["com.mattermost.plugin-incident-management"].Enable)
+		assert.True(t, c1.PluginSettings.PluginStates["playbooks"].Enable)
 	})
 
-	t.Run("should not enable IncidentManagement plugin by default on non-enterprise-ready builds", func(t *testing.T) {
+	t.Run("should enable Playbooks plugin by default on non-enterprise-ready builds", func(t *testing.T) {
 		BuildEnterpriseReady = ""
 		c1 := Config{}
 		c1.SetDefaults()
 
-		assert.Nil(t, c1.PluginSettings.PluginStates["com.mattermost.plugin-incident-management"])
+		assert.True(t, c1.PluginSettings.PluginStates["playbooks"].Enable)
 	})
 
-	t.Run("should not re-enable IncidentManagement plugin after it has been disabled", func(t *testing.T) {
+	t.Run("should not re-enable Playbooks plugin after it has been disabled", func(t *testing.T) {
 		BuildEnterpriseReady = ""
 		c1 := Config{
 			PluginSettings: PluginSettings{
 				PluginStates: map[string]*PluginState{
-					"com.mattermost.plugin-incident-management": {
+					"playbooks": {
 						Enable: false,
 					},
 				},
@@ -339,7 +347,7 @@ func TestConfigDefaultIncidentManagementPluginState(t *testing.T) {
 
 		c1.SetDefaults()
 
-		assert.False(t, c1.PluginSettings.PluginStates["com.mattermost.plugin-incident-management"].Enable)
+		assert.False(t, c1.PluginSettings.PluginStates["playbooks"].Enable)
 	})
 }
 
@@ -375,6 +383,30 @@ func TestConfigDefaultChannelExportPluginState(t *testing.T) {
 		c1.SetDefaults()
 
 		assert.False(t, c1.PluginSettings.PluginStates["com.mattermost.plugin-channel-export"].Enable)
+	})
+}
+
+func TestConfigDefaultFocalboardPluginState(t *testing.T) {
+	t.Run("should enable Focalboard plugin by default", func(t *testing.T) {
+		c1 := Config{}
+		c1.SetDefaults()
+
+		assert.True(t, c1.PluginSettings.PluginStates["focalboard"].Enable)
+	})
+
+	t.Run("should not re-enable focalboard plugin after it has been disabled", func(t *testing.T) {
+		c1 := Config{
+			PluginSettings: PluginSettings{
+				PluginStates: map[string]*PluginState{
+					"focalboard": {
+						Enable: false,
+					},
+				},
+			},
+		}
+
+		c1.SetDefaults()
+		assert.False(t, c1.PluginSettings.PluginStates["focalboard"].Enable)
 	})
 }
 
@@ -509,8 +541,8 @@ func TestMessageExportSettingsIsValidGlobalRelaySettingsInvalidCustomerType(t *t
 		GlobalRelaySettings: &GlobalRelayMessageExportSettings{
 			CustomerType: NewString("Invalid"),
 			EmailAddress: NewString("valid@mattermost.com"),
-			SmtpUsername: NewString("SomeUsername"),
-			SmtpPassword: NewString("SomePassword"),
+			SMTPUsername: NewString("SomeUsername"),
+			SMTPPassword: NewString("SomePassword"),
 		},
 	}
 
@@ -530,8 +562,8 @@ func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
 			&GlobalRelayMessageExportSettings{
 				CustomerType: NewString(GlobalrelayCustomerTypeA9),
 				EmailAddress: NewString("invalidEmailAddress"),
-				SmtpUsername: NewString("SomeUsername"),
-				SmtpPassword: NewString("SomePassword"),
+				SMTPUsername: NewString("SomeUsername"),
+				SMTPPassword: NewString("SomePassword"),
 			},
 			false,
 		},
@@ -540,7 +572,7 @@ func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
 			&GlobalRelayMessageExportSettings{
 				CustomerType: NewString(GlobalrelayCustomerTypeA10),
 				EmailAddress: NewString("valid@mattermost.com"),
-				SmtpPassword: NewString("SomePassword"),
+				SMTPPassword: NewString("SomePassword"),
 			},
 			false,
 		},
@@ -549,8 +581,8 @@ func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
 			&GlobalRelayMessageExportSettings{
 				CustomerType: NewString(GlobalrelayCustomerTypeA10),
 				EmailAddress: NewString("valid@mattermost.com"),
-				SmtpUsername: NewString(""),
-				SmtpPassword: NewString("SomePassword"),
+				SMTPUsername: NewString(""),
+				SMTPPassword: NewString("SomePassword"),
 			},
 			false,
 		},
@@ -559,8 +591,8 @@ func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
 			&GlobalRelayMessageExportSettings{
 				CustomerType: NewString(GlobalrelayCustomerTypeA10),
 				EmailAddress: NewString("valid@mattermost.com"),
-				SmtpUsername: NewString("SomeUsername"),
-				SmtpPassword: NewString(""),
+				SMTPUsername: NewString("SomeUsername"),
+				SMTPPassword: NewString(""),
 			},
 			false,
 		},
@@ -569,8 +601,8 @@ func TestMessageExportSettingsGlobalRelaySettings(t *testing.T) {
 			&GlobalRelayMessageExportSettings{
 				CustomerType: NewString(GlobalrelayCustomerTypeA9),
 				EmailAddress: NewString("valid@mattermost.com"),
-				SmtpUsername: NewString("SomeUsername"),
-				SmtpPassword: NewString("SomePassword"),
+				SMTPUsername: NewString("SomeUsername"),
+				SMTPPassword: NewString("SomePassword"),
 			},
 			true,
 		},
@@ -688,7 +720,7 @@ func TestMessageExportSetDefaultsExportDisabledExportFromTimestampNonZero(t *tes
 	require.Equal(t, 10000, *mes.BatchSize)
 }
 
-func TestDisplaySettingsIsValidCustomUrlSchemes(t *testing.T) {
+func TestDisplaySettingsIsValidCustomURLSchemes(t *testing.T) {
 	tests := []struct {
 		name  string
 		value []string
@@ -760,12 +792,12 @@ func TestDisplaySettingsIsValidCustomUrlSchemes(t *testing.T) {
 			ds := &DisplaySettings{}
 			ds.SetDefaults()
 
-			ds.CustomUrlSchemes = test.value
+			ds.CustomURLSchemes = test.value
 
-			if err := ds.isValid(); err != nil && test.valid {
-				t.Error("Expected CustomUrlSchemes to be valid but got error:", err)
-			} else if err == nil && !test.valid {
-				t.Error("Expected CustomUrlSchemes to be invalid but got no error")
+			if appErr := ds.isValid(); appErr != nil && test.valid {
+				t.Error("Expected CustomURLSchemes to be valid but got error:", appErr)
+			} else if appErr == nil && !test.valid {
+				t.Error("Expected CustomURLSchemes to be invalid but got no error")
 			}
 		})
 	}
@@ -805,57 +837,23 @@ func TestListenAddressIsValidated(t *testing.T) {
 		if expected {
 			require.Nil(t, ss.isValid(), fmt.Sprintf("Got an error from '%v'.", key))
 		} else {
-			err := ss.isValid()
-			require.NotNil(t, err, fmt.Sprintf("Expected '%v' to throw an error.", key))
-			require.Equal(t, "model.config.is_valid.listen_address.app_error", err.Message)
+			appErr := ss.isValid()
+			require.NotNil(t, appErr, fmt.Sprintf("Expected '%v' to throw an error.", key))
+			require.Equal(t, "model.config.is_valid.listen_address.app_error", appErr.Message)
 		}
 	}
 
 }
 
 func TestImageProxySettingsSetDefaults(t *testing.T) {
-	ss := ServiceSettings{
-		DEPRECATED_DO_NOT_USE_ImageProxyType:    NewString(ImageProxyTypeAtmosCamo),
-		DEPRECATED_DO_NOT_USE_ImageProxyURL:     NewString("http://images.example.com"),
-		DEPRECATED_DO_NOT_USE_ImageProxyOptions: NewString("1234abcd"),
-	}
-
-	t.Run("default, no old settings", func(t *testing.T) {
+	t.Run("default settings", func(t *testing.T) {
 		ips := ImageProxySettings{}
-		ips.SetDefaults(ServiceSettings{})
+		ips.SetDefaults()
 
 		assert.Equal(t, false, *ips.Enable)
 		assert.Equal(t, ImageProxyTypeLocal, *ips.ImageProxyType)
 		assert.Equal(t, "", *ips.RemoteImageProxyURL)
 		assert.Equal(t, "", *ips.RemoteImageProxyOptions)
-	})
-
-	t.Run("default, old settings", func(t *testing.T) {
-		ips := ImageProxySettings{}
-		ips.SetDefaults(ss)
-
-		assert.Equal(t, true, *ips.Enable)
-		assert.Equal(t, *ss.DEPRECATED_DO_NOT_USE_ImageProxyType, *ips.ImageProxyType)
-		assert.Equal(t, *ss.DEPRECATED_DO_NOT_USE_ImageProxyURL, *ips.RemoteImageProxyURL)
-		assert.Equal(t, *ss.DEPRECATED_DO_NOT_USE_ImageProxyOptions, *ips.RemoteImageProxyOptions)
-	})
-
-	t.Run("not default, old settings", func(t *testing.T) {
-		url := "http://images.mattermost.com"
-		options := "aaaaaaaa"
-
-		ips := ImageProxySettings{
-			Enable:                  NewBool(false),
-			ImageProxyType:          NewString(ImageProxyTypeLocal),
-			RemoteImageProxyURL:     &url,
-			RemoteImageProxyOptions: &options,
-		}
-		ips.SetDefaults(ss)
-
-		assert.Equal(t, false, *ips.Enable)
-		assert.Equal(t, ImageProxyTypeLocal, *ips.ImageProxyType)
-		assert.Equal(t, url, *ips.RemoteImageProxyURL)
-		assert.Equal(t, options, *ips.RemoteImageProxyOptions)
 	})
 }
 
@@ -928,11 +926,11 @@ func TestImageProxySettingsIsValid(t *testing.T) {
 				RemoteImageProxyOptions: &test.RemoteImageProxyOptions,
 			}
 
-			err := ips.isValid()
+			appErr := ips.isValid()
 			if test.ExpectError {
-				assert.NotNil(t, err)
+				assert.NotNil(t, appErr)
 			} else {
-				assert.Nil(t, err)
+				assert.Nil(t, appErr)
 			}
 		})
 	}
@@ -1279,11 +1277,11 @@ func TestLdapSettingsIsValid(t *testing.T) {
 		t.Run(test.Name, func(t *testing.T) {
 			test.LdapSettings.SetDefaults()
 
-			err := test.LdapSettings.isValid()
+			appErr := test.LdapSettings.isValid()
 			if test.ExpectError {
-				assert.NotNil(t, err)
+				assert.NotNil(t, appErr)
 			} else {
-				assert.Nil(t, err)
+				assert.Nil(t, appErr)
 			}
 		})
 	}
@@ -1323,12 +1321,12 @@ func TestConfigFilteredByTag(t *testing.T) {
 	cfgMap := structToMapFilteredByTag(c, ConfigAccessTagType, ConfigAccessTagCloudRestrictable)
 
 	// Remove entire sections but the map is still there
-	clusterSettings, ok := cfgMap["SqlSettings"].(map[string]interface{})
+	clusterSettings, ok := cfgMap["SqlSettings"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, 0, len(clusterSettings))
+	require.Empty(t, clusterSettings)
 
 	// Some fields are removed if they have the filtering tag
-	serviceSettings, ok := cfgMap["ServiceSettings"].(map[string]interface{})
+	serviceSettings, ok := cfgMap["ServiceSettings"].(map[string]any)
 	require.True(t, ok)
 	_, ok = serviceSettings["ListenAddress"]
 	require.False(t, ok)
@@ -1338,10 +1336,11 @@ func TestConfigToJSONFiltered(t *testing.T) {
 	c := Config{}
 	c.SetDefaults()
 
-	jsonCfgFiltered := c.ToJsonFiltered(ConfigAccessTagType, ConfigAccessTagCloudRestrictable)
+	jsonCfgFiltered, err := c.ToJSONFiltered(ConfigAccessTagType, ConfigAccessTagCloudRestrictable)
+	require.NoError(t, err)
 
 	unmarshaledCfg := make(map[string]json.RawMessage)
-	err := json.Unmarshal([]byte(jsonCfgFiltered), &unmarshaledCfg)
+	err = json.Unmarshal(jsonCfgFiltered, &unmarshaledCfg)
 	require.NoError(t, err)
 
 	_, ok := unmarshaledCfg["SqlSettings"]
@@ -1368,29 +1367,29 @@ func TestConfigMarketplaceDefaults(t *testing.T) {
 		c.SetDefaults()
 
 		require.True(t, *c.PluginSettings.EnableMarketplace)
-		require.Equal(t, PluginSettingsDefaultMarketplaceUrl, *c.PluginSettings.MarketplaceUrl)
+		require.Equal(t, PluginSettingsDefaultMarketplaceURL, *c.PluginSettings.MarketplaceURL)
 	})
 
 	t.Run("old marketplace url", func(t *testing.T) {
 		c := Config{}
 		c.SetDefaults()
 
-		*c.PluginSettings.MarketplaceUrl = PluginSettingsOldMarketplaceUrl
+		*c.PluginSettings.MarketplaceURL = PluginSettingsOldMarketplaceURL
 		c.SetDefaults()
 
 		require.True(t, *c.PluginSettings.EnableMarketplace)
-		require.Equal(t, PluginSettingsDefaultMarketplaceUrl, *c.PluginSettings.MarketplaceUrl)
+		require.Equal(t, PluginSettingsDefaultMarketplaceURL, *c.PluginSettings.MarketplaceURL)
 	})
 
 	t.Run("custom marketplace url", func(t *testing.T) {
 		c := Config{}
 		c.SetDefaults()
 
-		*c.PluginSettings.MarketplaceUrl = "https://marketplace.example.com"
+		*c.PluginSettings.MarketplaceURL = "https://marketplace.example.com"
 		c.SetDefaults()
 
 		require.True(t, *c.PluginSettings.EnableMarketplace)
-		require.Equal(t, "https://marketplace.example.com", *c.PluginSettings.MarketplaceUrl)
+		require.Equal(t, "https://marketplace.example.com", *c.PluginSettings.MarketplaceURL)
 	})
 }
 
@@ -1424,20 +1423,20 @@ func TestConfigImportSettingsIsValid(t *testing.T) {
 	cfg := Config{}
 	cfg.SetDefaults()
 
-	err := cfg.ImportSettings.isValid()
-	require.Nil(t, err)
+	appErr := cfg.ImportSettings.isValid()
+	require.Nil(t, appErr)
 
 	*cfg.ImportSettings.Directory = ""
-	err = cfg.ImportSettings.isValid()
-	require.NotNil(t, err)
-	require.Equal(t, "model.config.is_valid.import.directory.app_error", err.Id)
+	appErr = cfg.ImportSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.import.directory.app_error", appErr.Id)
 
 	cfg.SetDefaults()
 
 	*cfg.ImportSettings.RetentionDays = 0
-	err = cfg.ImportSettings.isValid()
-	require.NotNil(t, err)
-	require.Equal(t, "model.config.is_valid.import.retention_days_too_low.app_error", err.Id)
+	appErr = cfg.ImportSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.import.retention_days_too_low.app_error", appErr.Id)
 }
 
 func TestConfigExportSettingsDefaults(t *testing.T) {
@@ -1452,18 +1451,88 @@ func TestConfigExportSettingsIsValid(t *testing.T) {
 	cfg := Config{}
 	cfg.SetDefaults()
 
-	err := cfg.ExportSettings.isValid()
-	require.Nil(t, err)
+	appErr := cfg.ExportSettings.isValid()
+	require.Nil(t, appErr)
 
 	*cfg.ExportSettings.Directory = ""
-	err = cfg.ExportSettings.isValid()
-	require.NotNil(t, err)
-	require.Equal(t, "model.config.is_valid.export.directory.app_error", err.Id)
+	appErr = cfg.ExportSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.export.directory.app_error", appErr.Id)
 
 	cfg.SetDefaults()
 
 	*cfg.ExportSettings.RetentionDays = 0
-	err = cfg.ExportSettings.isValid()
-	require.NotNil(t, err)
-	require.Equal(t, "model.config.is_valid.export.retention_days_too_low.app_error", err.Id)
+	appErr = cfg.ExportSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.export.retention_days_too_low.app_error", appErr.Id)
+}
+
+func TestConfigServiceSettingsIsValid(t *testing.T) {
+	cfg := Config{}
+	cfg.SetDefaults()
+
+	appErr := cfg.ServiceSettings.isValid()
+	require.Nil(t, appErr)
+
+	*cfg.ServiceSettings.CollapsedThreads = CollapsedThreadsDisabled
+	appErr = cfg.ServiceSettings.isValid()
+	require.Nil(t, appErr)
+
+	*cfg.ServiceSettings.ThreadAutoFollow = false
+	appErr = cfg.ServiceSettings.isValid()
+	require.Nil(t, appErr)
+
+	*cfg.ServiceSettings.CollapsedThreads = CollapsedThreadsDefaultOff
+	appErr = cfg.ServiceSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.collapsed_threads.autofollow.app_error", appErr.Id)
+
+	*cfg.ServiceSettings.CollapsedThreads = CollapsedThreadsDefaultOn
+	appErr = cfg.ServiceSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.collapsed_threads.autofollow.app_error", appErr.Id)
+
+	*cfg.ServiceSettings.CollapsedThreads = CollapsedThreadsAlwaysOn
+	appErr = cfg.ServiceSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.collapsed_threads.autofollow.app_error", appErr.Id)
+
+	*cfg.ServiceSettings.ThreadAutoFollow = true
+	*cfg.ServiceSettings.CollapsedThreads = "test_status"
+	appErr = cfg.ServiceSettings.isValid()
+	require.NotNil(t, appErr)
+	require.Equal(t, "model.config.is_valid.collapsed_threads.app_error", appErr.Id)
+}
+
+func TestConfigDefaultCallsPluginState(t *testing.T) {
+	t.Run("should enable Calls plugin by default on self-hosted", func(t *testing.T) {
+		c1 := Config{}
+		c1.SetDefaults()
+
+		assert.True(t, c1.PluginSettings.PluginStates["com.mattermost.calls"].Enable)
+	})
+
+	t.Run("should enable Calls plugin by default on Cloud", func(t *testing.T) {
+		os.Setenv("MM_CLOUD_INSTALLATION_ID", "test")
+		defer os.Unsetenv("MM_CLOUD_INSTALLATION_ID")
+		c1 := Config{}
+		c1.SetDefaults()
+
+		assert.True(t, c1.PluginSettings.PluginStates["com.mattermost.calls"].Enable)
+	})
+
+	t.Run("should not re-enable Calls plugin after it has been disabled", func(t *testing.T) {
+		c1 := Config{
+			PluginSettings: PluginSettings{
+				PluginStates: map[string]*PluginState{
+					"com.mattermost.calls": {
+						Enable: false,
+					},
+				},
+			},
+		}
+
+		c1.SetDefaults()
+		assert.False(t, c1.PluginSettings.PluginStates["com.mattermost.calls"].Enable)
+	})
 }

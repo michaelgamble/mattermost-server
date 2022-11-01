@@ -3,11 +3,6 @@
 
 package model
 
-import (
-	"encoding/json"
-	"io"
-)
-
 type ClusterEvent string
 
 const (
@@ -31,10 +26,12 @@ const (
 	ClusterEventInvalidateCacheForWebhooks                  ClusterEvent = "inv_webhooks"
 	ClusterEventInvalidateCacheForEmojisById                ClusterEvent = "inv_emojis_by_id"
 	ClusterEventInvalidateCacheForEmojisIdByName            ClusterEvent = "inv_emojis_id_by_name"
+	ClusterEventInvalidateCacheForChannelFileCount          ClusterEvent = "inv_channel_file_count"
 	ClusterEventInvalidateCacheForChannelPinnedpostsCounts  ClusterEvent = "inv_channel_pinnedposts_counts"
 	ClusterEventInvalidateCacheForChannelMemberCounts       ClusterEvent = "inv_channel_member_counts"
 	ClusterEventInvalidateCacheForLastPosts                 ClusterEvent = "inv_last_posts"
 	ClusterEventInvalidateCacheForLastPostTime              ClusterEvent = "inv_last_post_time"
+	ClusterEventInvalidateCacheForPostsUsage                ClusterEvent = "inv_posts_usage"
 	ClusterEventInvalidateCacheForTeams                     ClusterEvent = "inv_teams"
 	ClusterEventClearSessionCacheForAllUsers                ClusterEvent = "inv_all_user_sessions"
 	ClusterEventInstallPlugin                               ClusterEvent = "install_plugin"
@@ -62,17 +59,6 @@ type ClusterMessage struct {
 	Event            ClusterEvent      `json:"event"`
 	SendType         string            `json:"-"`
 	WaitForAllToSend bool              `json:"-"`
-	Data             string            `json:"data,omitempty"`
+	Data             []byte            `json:"data,omitempty"`
 	Props            map[string]string `json:"props,omitempty"`
-}
-
-func (o *ClusterMessage) ToJson() string {
-	b, _ := json.Marshal(o)
-	return string(b)
-}
-
-func ClusterMessageFromJson(data io.Reader) *ClusterMessage {
-	var o *ClusterMessage
-	json.NewDecoder(data).Decode(&o)
-	return o
 }

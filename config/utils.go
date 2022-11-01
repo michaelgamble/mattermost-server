@@ -81,12 +81,12 @@ func desanitize(actual, target *model.Config) {
 		}
 	}
 
-	if *target.MessageExportSettings.GlobalRelaySettings.SmtpPassword == model.FakeSetting {
-		*target.MessageExportSettings.GlobalRelaySettings.SmtpPassword = *actual.MessageExportSettings.GlobalRelaySettings.SmtpPassword
+	if *target.MessageExportSettings.GlobalRelaySettings.SMTPPassword == model.FakeSetting {
+		*target.MessageExportSettings.GlobalRelaySettings.SMTPPassword = *actual.MessageExportSettings.GlobalRelaySettings.SMTPPassword
 	}
 
-	if target.ServiceSettings.GfycatApiSecret != nil && *target.ServiceSettings.GfycatApiSecret == model.FakeSetting {
-		*target.ServiceSettings.GfycatApiSecret = *actual.ServiceSettings.GfycatApiSecret
+	if target.ServiceSettings.GfycatAPISecret != nil && *target.ServiceSettings.GfycatAPISecret == model.FakeSetting {
+		*target.ServiceSettings.GfycatAPISecret = *actual.ServiceSettings.GfycatAPISecret
 	}
 
 	if *target.ServiceSettings.SplitKey == model.FakeSetting {
@@ -174,7 +174,9 @@ func Merge(cfg *model.Config, patch *model.Config, mergeConfig *utils.MergeConfi
 }
 
 func IsDatabaseDSN(dsn string) bool {
-	return strings.HasPrefix(dsn, "mysql://") || strings.HasPrefix(dsn, "postgres://")
+	return strings.HasPrefix(dsn, "mysql://") ||
+		strings.HasPrefix(dsn, "postgres://") ||
+		strings.HasPrefix(dsn, "postgresql://")
 }
 
 // stripPassword remove the password from a given DSN
@@ -199,11 +201,11 @@ func stripPassword(dsn, schema string) string {
 }
 
 func isJSONMap(data string) bool {
-	var m map[string]interface{}
+	var m map[string]any
 	return json.Unmarshal([]byte(data), &m) == nil
 }
 
-func GetValueByPath(path []string, obj interface{}) (interface{}, bool) {
+func GetValueByPath(path []string, obj any) (any, bool) {
 	r := reflect.ValueOf(obj)
 	var val reflect.Value
 	if r.Kind() == reflect.Map {

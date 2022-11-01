@@ -13,14 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/rpc"
 	"os"
 	"reflect"
+	"sync"
 
-	"github.com/dyatlov/go-opengraph/opengraph"
 	"github.com/go-sql-driver/mysql"
 	"github.com/hashicorp/go-plugin"
 	"github.com/lib/pq"
@@ -38,27 +37,28 @@ type hooksRPCClient struct {
 	apiImpl     API
 	driver      Driver
 	implemented [TotalHooksID]bool
+	doneWg      sync.WaitGroup
 }
 
 type hooksRPCServer struct {
-	impl         interface{}
+	impl         any
 	muxBroker    *plugin.MuxBroker
 	apiRPCClient *apiRPCClient
 }
 
 // Implements hashicorp/go-plugin/plugin.Plugin interface to connect the hooks of a plugin
 type hooksPlugin struct {
-	hooks      interface{}
+	hooks      any
 	apiImpl    API
 	driverImpl Driver
 	log        *mlog.Logger
 }
 
-func (p *hooksPlugin) Server(b *plugin.MuxBroker) (interface{}, error) {
+func (p *hooksPlugin) Server(b *plugin.MuxBroker) (any, error) {
 	return &hooksRPCServer{impl: p.hooks, muxBroker: b}, nil
 }
 
-func (p *hooksPlugin) Client(b *plugin.MuxBroker, client *rpc.Client) (interface{}, error) {
+func (p *hooksPlugin) Client(b *plugin.MuxBroker, client *rpc.Client) (any, error) {
 	return &hooksRPCClient{client: client,
 		log:       p.log,
 		muxBroker: b,
@@ -156,16 +156,16 @@ func decodableError(err error) error {
 // Registering some types used by MM for encoding/gob used by rpc
 func init() {
 	gob.Register([]*model.SlackAttachment{})
-	gob.Register([]interface{}{})
-	gob.Register(map[string]interface{}{})
+	gob.Register([]any{})
+	gob.Register(map[string]any{})
 	gob.Register(&model.AppError{})
 	gob.Register(&pq.Error{})
 	gob.Register(&mysql.MySQLError{})
 	gob.Register(&ErrorString{})
-	gob.Register(&opengraph.OpenGraph{})
 	gob.Register(&model.AutocompleteDynamicListArg{})
 	gob.Register(&model.AutocompleteStaticListArg{})
 	gob.Register(&model.AutocompleteTextArg{})
+	gob.Register(&model.PreviewPost{})
 }
 
 // These enforce compile time checks to make sure types implement the interface
@@ -240,15 +240,23 @@ type Z_OnActivateReturns struct {
 
 func (g *hooksRPCClient) OnActivate() error {
 	muxId := g.muxBroker.NextId()
-	go g.muxBroker.AcceptAndServe(muxId, &apiRPCServer{
-		impl:      g.apiImpl,
-		muxBroker: g.muxBroker,
-	})
+	g.doneWg.Add(1)
+	go func() {
+		defer g.doneWg.Done()
+		g.muxBroker.AcceptAndServe(muxId, &apiRPCServer{
+			impl:      g.apiImpl,
+			muxBroker: g.muxBroker,
+		})
+	}()
 
 	nextID := g.muxBroker.NextId()
-	go g.muxBroker.AcceptAndServe(nextID, &dbRPCServer{
-		dbImpl: g.driver,
-	})
+	g.doneWg.Add(1)
+	go func() {
+		defer g.doneWg.Done()
+		g.muxBroker.AcceptAndServe(nextID, &dbRPCServer{
+			dbImpl: g.driver,
+		})
+	}()
 
 	_args := &Z_OnActivateArgs{
 		APIMuxId:    muxId,
@@ -284,11 +292,9 @@ func (s *hooksRPCServer) OnActivate(args *Z_OnActivateArgs, returns *Z_OnActivat
 
 	if mmplugin, ok := s.impl.(interface {
 		SetAPI(api API)
-		SetHelpers(helpers Helpers)
 		SetDriver(driver Driver)
 	}); ok {
 		mmplugin.SetAPI(s.apiRPCClient)
-		mmplugin.SetHelpers(&HelpersImpl{API: s.apiRPCClient})
 		mmplugin.SetDriver(dbClient)
 	}
 
@@ -319,7 +325,7 @@ type Z_LoadPluginConfigurationArgsReturns struct {
 	A []byte
 }
 
-func (g *apiRPCClient) LoadPluginConfiguration(dest interface{}) error {
+func (g *apiRPCClient) LoadPluginConfiguration(dest any) error {
 	_args := &Z_LoadPluginConfigurationArgsArgs{}
 	_returns := &Z_LoadPluginConfigurationArgsReturns{}
 	if err := g.client.Call("Plugin.LoadPluginConfiguration", _args, _returns); err != nil {
@@ -332,9 +338,9 @@ func (g *apiRPCClient) LoadPluginConfiguration(dest interface{}) error {
 }
 
 func (s *apiRPCServer) LoadPluginConfiguration(args *Z_LoadPluginConfigurationArgsArgs, returns *Z_LoadPluginConfigurationArgsReturns) error {
-	var config interface{}
+	var config any
 	if hook, ok := s.impl.(interface {
-		LoadPluginConfiguration(dest interface{}) error
+		LoadPluginConfiguration(dest any) error
 	}); ok {
 		if err := hook.LoadPluginConfiguration(&config); err != nil {
 			return err
@@ -437,7 +443,7 @@ func (s *hooksRPCServer) ServeHTTP(args *Z_ServeHTTPArgs, returns *struct{}) err
 		}
 		r.Body = connectIOReader(connection)
 	} else {
-		r.Body = ioutil.NopCloser(&bytes.Buffer{})
+		r.Body = io.NopCloser(&bytes.Buffer{})
 	}
 	defer r.Body.Close()
 
@@ -480,7 +486,7 @@ func (g *apiRPCClient) PluginHTTP(request *http.Request) *http.Response {
 	}
 
 	if request.Body != nil {
-		requestBody, err := ioutil.ReadAll(request.Body)
+		requestBody, err := io.ReadAll(request.Body)
 		if err != nil {
 			log.Printf("RPC call to PluginHTTP API failed: %s", err.Error())
 			return nil
@@ -497,20 +503,20 @@ func (g *apiRPCClient) PluginHTTP(request *http.Request) *http.Response {
 		return nil
 	}
 
-	_returns.Response.Body = ioutil.NopCloser(bytes.NewBuffer(_returns.ResponseBody))
+	_returns.Response.Body = io.NopCloser(bytes.NewBuffer(_returns.ResponseBody))
 
 	return _returns.Response
 }
 
 func (s *apiRPCServer) PluginHTTP(args *Z_PluginHTTPArgs, returns *Z_PluginHTTPReturns) error {
-	args.Request.Body = ioutil.NopCloser(bytes.NewBuffer(args.RequestBody))
+	args.Request.Body = io.NopCloser(bytes.NewBuffer(args.RequestBody))
 
 	if hook, ok := s.impl.(interface {
 		PluginHTTP(request *http.Request) *http.Response
 	}); ok {
 		response := hook.PluginHTTP(args.Request)
 
-		responseBody, err := ioutil.ReadAll(response.Body)
+		responseBody, err := io.ReadAll(response.Body)
 		if err != nil {
 			return encodableError(fmt.Errorf("RPC call to PluginHTTP API failed: %s", err.Error()))
 		}
@@ -696,13 +702,13 @@ func (s *hooksRPCServer) MessageWillBeUpdated(args *Z_MessageWillBeUpdatedArgs, 
 
 type Z_LogDebugArgs struct {
 	A string
-	B []interface{}
+	B []any
 }
 
 type Z_LogDebugReturns struct {
 }
 
-func (g *apiRPCClient) LogDebug(msg string, keyValuePairs ...interface{}) {
+func (g *apiRPCClient) LogDebug(msg string, keyValuePairs ...any) {
 	stringifiedPairs := stringifyToObjects(keyValuePairs)
 	_args := &Z_LogDebugArgs{msg, stringifiedPairs}
 	_returns := &Z_LogDebugReturns{}
@@ -714,7 +720,7 @@ func (g *apiRPCClient) LogDebug(msg string, keyValuePairs ...interface{}) {
 
 func (s *apiRPCServer) LogDebug(args *Z_LogDebugArgs, returns *Z_LogDebugReturns) error {
 	if hook, ok := s.impl.(interface {
-		LogDebug(msg string, keyValuePairs ...interface{})
+		LogDebug(msg string, keyValuePairs ...any)
 	}); ok {
 		hook.LogDebug(args.A, args.B...)
 	} else {
@@ -725,13 +731,13 @@ func (s *apiRPCServer) LogDebug(args *Z_LogDebugArgs, returns *Z_LogDebugReturns
 
 type Z_LogInfoArgs struct {
 	A string
-	B []interface{}
+	B []any
 }
 
 type Z_LogInfoReturns struct {
 }
 
-func (g *apiRPCClient) LogInfo(msg string, keyValuePairs ...interface{}) {
+func (g *apiRPCClient) LogInfo(msg string, keyValuePairs ...any) {
 	stringifiedPairs := stringifyToObjects(keyValuePairs)
 	_args := &Z_LogInfoArgs{msg, stringifiedPairs}
 	_returns := &Z_LogInfoReturns{}
@@ -743,7 +749,7 @@ func (g *apiRPCClient) LogInfo(msg string, keyValuePairs ...interface{}) {
 
 func (s *apiRPCServer) LogInfo(args *Z_LogInfoArgs, returns *Z_LogInfoReturns) error {
 	if hook, ok := s.impl.(interface {
-		LogInfo(msg string, keyValuePairs ...interface{})
+		LogInfo(msg string, keyValuePairs ...any)
 	}); ok {
 		hook.LogInfo(args.A, args.B...)
 	} else {
@@ -754,13 +760,13 @@ func (s *apiRPCServer) LogInfo(args *Z_LogInfoArgs, returns *Z_LogInfoReturns) e
 
 type Z_LogWarnArgs struct {
 	A string
-	B []interface{}
+	B []any
 }
 
 type Z_LogWarnReturns struct {
 }
 
-func (g *apiRPCClient) LogWarn(msg string, keyValuePairs ...interface{}) {
+func (g *apiRPCClient) LogWarn(msg string, keyValuePairs ...any) {
 	stringifiedPairs := stringifyToObjects(keyValuePairs)
 	_args := &Z_LogWarnArgs{msg, stringifiedPairs}
 	_returns := &Z_LogWarnReturns{}
@@ -772,7 +778,7 @@ func (g *apiRPCClient) LogWarn(msg string, keyValuePairs ...interface{}) {
 
 func (s *apiRPCServer) LogWarn(args *Z_LogWarnArgs, returns *Z_LogWarnReturns) error {
 	if hook, ok := s.impl.(interface {
-		LogWarn(msg string, keyValuePairs ...interface{})
+		LogWarn(msg string, keyValuePairs ...any)
 	}); ok {
 		hook.LogWarn(args.A, args.B...)
 	} else {
@@ -783,13 +789,13 @@ func (s *apiRPCServer) LogWarn(args *Z_LogWarnArgs, returns *Z_LogWarnReturns) e
 
 type Z_LogErrorArgs struct {
 	A string
-	B []interface{}
+	B []any
 }
 
 type Z_LogErrorReturns struct {
 }
 
-func (g *apiRPCClient) LogError(msg string, keyValuePairs ...interface{}) {
+func (g *apiRPCClient) LogError(msg string, keyValuePairs ...any) {
 	stringifiedPairs := stringifyToObjects(keyValuePairs)
 	_args := &Z_LogErrorArgs{msg, stringifiedPairs}
 	_returns := &Z_LogErrorReturns{}
@@ -800,7 +806,7 @@ func (g *apiRPCClient) LogError(msg string, keyValuePairs ...interface{}) {
 
 func (s *apiRPCServer) LogError(args *Z_LogErrorArgs, returns *Z_LogErrorReturns) error {
 	if hook, ok := s.impl.(interface {
-		LogError(msg string, keyValuePairs ...interface{})
+		LogError(msg string, keyValuePairs ...any)
 	}); ok {
 		hook.LogError(args.A, args.B...)
 	} else {

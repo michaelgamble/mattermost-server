@@ -6,7 +6,6 @@ package filestore
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -33,14 +32,12 @@ type FileBackendTestSuite struct {
 func TestLocalFileBackendTestSuite(t *testing.T) {
 	// Setup a global logger to catch tests logging outside of app context
 	// The global logger will be stomped by apps initializing but that's fine for testing. Ideally this won't happen.
-	mlog.InitGlobalLogger(mlog.NewLogger(&mlog.LoggerConfiguration{
-		EnableConsole: true,
-		ConsoleJson:   true,
-		ConsoleLevel:  "error",
-		EnableFile:    false,
-	}))
+	logger := mlog.CreateConsoleTestLogger(true, mlog.LvlError)
+	defer logger.Shutdown()
 
-	dir, err := ioutil.TempDir("", "")
+	mlog.InitGlobalLogger(logger)
+
+	dir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
@@ -75,15 +72,16 @@ func runBackendTest(t *testing.T, encrypt bool) {
 
 	suite.Run(t, &FileBackendTestSuite{
 		settings: FileBackendSettings{
-			DriverName:              driverS3,
-			AmazonS3AccessKeyId:     "minioaccesskey",
-			AmazonS3SecretAccessKey: "miniosecretkey",
-			AmazonS3Bucket:          "mattermost-test",
-			AmazonS3Region:          "",
-			AmazonS3Endpoint:        s3Endpoint,
-			AmazonS3PathPrefix:      "",
-			AmazonS3SSL:             false,
-			AmazonS3SSE:             encrypt,
+			DriverName:                         driverS3,
+			AmazonS3AccessKeyId:                "minioaccesskey",
+			AmazonS3SecretAccessKey:            "miniosecretkey",
+			AmazonS3Bucket:                     "mattermost-test",
+			AmazonS3Region:                     "",
+			AmazonS3Endpoint:                   s3Endpoint,
+			AmazonS3PathPrefix:                 "",
+			AmazonS3SSL:                        false,
+			AmazonS3SSE:                        encrypt,
+			AmazonS3RequestTimeoutMilliseconds: 5000,
 		},
 	})
 }
@@ -272,14 +270,19 @@ func (s *FileBackendTestSuite) TestListDirectory() {
 	s.Len(paths, 1)
 	s.Equal(path1, (paths)[0])
 
-	paths, err = s.backend.ListDirectory("19700101/")
+	paths, err = s.backend.ListDirectory("19800101/")
 	s.Nil(err)
 	s.Len(paths, 1)
-	s.Equal(path1, (paths)[0])
+	s.Equal(path2, (paths)[0])
+
+	if s.settings.DriverName == driverLocal {
+		paths, err = s.backend.ListDirectory("19800102")
+		s.Nil(err)
+		s.Len(paths, 0)
+	}
 
 	paths, err = s.backend.ListDirectory("")
 	s.Nil(err)
-
 	found1 := false
 	found2 := false
 	for _, path := range paths {
@@ -294,6 +297,69 @@ func (s *FileBackendTestSuite) TestListDirectory() {
 
 	s.backend.RemoveFile(path1)
 	s.backend.RemoveFile(path2)
+}
+
+func (s *FileBackendTestSuite) TestListDirectoryRecursively() {
+	b := []byte("test")
+	path1 := "19700101/" + randomString()
+	path2 := "19800101/" + randomString()
+	longPath := "19800102/this/is/a/way/too/long/path/for/this/function/to/handle" + randomString()
+
+	paths, err := s.backend.ListDirectoryRecursively("19700101")
+	s.Nil(err)
+	s.Len(paths, 0)
+
+	written, err := s.backend.WriteFile(bytes.NewReader(b), path1)
+	s.Nil(err)
+	s.EqualValues(len(b), written, "expected given number of bytes to have been written")
+
+	written, err = s.backend.WriteFile(bytes.NewReader(b), path2)
+	s.Nil(err)
+	s.EqualValues(len(b), written, "expected given number of bytes to have been written")
+
+	written, err = s.backend.WriteFile(bytes.NewReader(b), longPath)
+	s.Nil(err)
+	s.EqualValues(len(b), written, "expected given number of bytes to have been written")
+
+	paths, err = s.backend.ListDirectoryRecursively("19700101")
+	s.Nil(err)
+	s.Len(paths, 1)
+	s.Equal(path1, (paths)[0])
+
+	paths, err = s.backend.ListDirectoryRecursively("19800101/")
+	s.Nil(err)
+	s.Len(paths, 1)
+	s.Equal(path2, (paths)[0])
+
+	if s.settings.DriverName == driverLocal {
+		paths, err = s.backend.ListDirectory("19800102")
+		s.Nil(err)
+		s.Len(paths, 1)
+	}
+
+	paths, err = s.backend.ListDirectoryRecursively("")
+	s.Nil(err)
+	found1 := false
+	found2 := false
+	found3 := false
+	for _, path := range paths {
+		if path == path1 {
+			found1 = true
+		} else if path == path2 {
+			found2 = true
+		} else if path == longPath {
+			found3 = true
+		}
+	}
+	s.True(found1)
+	s.True(found2)
+	if s.settings.DriverName == driverLocal {
+		s.False(found3)
+	}
+
+	s.backend.RemoveFile(path1)
+	s.backend.RemoveFile(path2)
+	s.backend.RemoveFile(longPath)
 }
 
 func (s *FileBackendTestSuite) TestRemoveDirectory() {
@@ -434,15 +500,16 @@ func (s *FileBackendTestSuite) TestFileModTime() {
 
 func BenchmarkS3WriteFile(b *testing.B) {
 	settings := FileBackendSettings{
-		DriverName:              driverS3,
-		AmazonS3AccessKeyId:     "minioaccesskey",
-		AmazonS3SecretAccessKey: "miniosecretkey",
-		AmazonS3Bucket:          "mattermost-test",
-		AmazonS3Region:          "",
-		AmazonS3Endpoint:        "localhost:9000",
-		AmazonS3PathPrefix:      "",
-		AmazonS3SSL:             false,
-		AmazonS3SSE:             false,
+		DriverName:                         driverS3,
+		AmazonS3AccessKeyId:                "minioaccesskey",
+		AmazonS3SecretAccessKey:            "miniosecretkey",
+		AmazonS3Bucket:                     "mattermost-test",
+		AmazonS3Region:                     "",
+		AmazonS3Endpoint:                   "localhost:9000",
+		AmazonS3PathPrefix:                 "",
+		AmazonS3SSL:                        false,
+		AmazonS3SSE:                        false,
+		AmazonS3RequestTimeoutMilliseconds: 20000,
 	}
 
 	backend, err := NewFileBackend(settings)
@@ -461,7 +528,7 @@ func BenchmarkS3WriteFile(b *testing.B) {
 		written, err := backend.WriteFile(bytes.NewReader(data), path)
 		defer backend.RemoveFile(path)
 		require.NoError(b, err)
-		require.Equal(b, len(data), int(written))
+		require.Len(b, data, int(written))
 	}
 
 	b.StopTimer()

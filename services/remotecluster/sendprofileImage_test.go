@@ -9,7 +9,6 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -35,13 +34,13 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 	shouldError := &flag{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer io.Copy(ioutil.Discard, r.Body)
+		defer io.Copy(io.Discard, r.Body)
 
 		if shouldError.get() {
 			w.WriteHeader(http.StatusInternalServerError)
 			resp := make(map[string]string)
 			resp[model.STATUS] = model.StatusFail
-			w.Write([]byte(model.MapToJson(resp)))
+			w.Write([]byte(model.MapToJSON(resp)))
 			return
 		}
 
@@ -52,7 +51,7 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 			}
 			resp := make(map[string]string)
 			resp[model.STATUS] = *s
-			w.Write([]byte(model.MapToJson(resp)))
+			w.Write([]byte(model.MapToJSON(resp)))
 		}(&status)
 
 		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
@@ -101,7 +100,8 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 
 	provider := testImageProvider{}
 
-	mockServer := newMockServer(t, makeRemoteClusters(NumRemotes, ts.URL))
+	mockServer := newMockServer(makeRemoteClusters(NumRemotes, ts.URL))
+	defer mockServer.Shutdown()
 	mockServer.SetUser(user)
 	service, err := NewRemoteClusterService(mockServer)
 	require.NoError(t, err)

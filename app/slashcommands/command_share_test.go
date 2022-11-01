@@ -4,7 +4,7 @@
 package slashcommands
 
 import (
-	"strings"
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,13 +33,13 @@ func TestShareProviderDoCommand(t *testing.T) {
 
 		th.Server.SetRemoteClusterService(mockRemoteCluster)
 		testCluster := &testlib.FakeClusterInterface{}
-		th.Server.Cluster = testCluster
+		th.Server.Platform().SetCluster(testCluster)
 
 		commandProvider := ShareProvider{}
 		channel := th.CreateChannel(th.BasicTeam, WithShared(false))
 
 		args := &model.CommandArgs{
-			T:         func(s string, args ...interface{}) string { return s },
+			T:         func(s string, args ...any) string { return s },
 			ChannelId: channel.Id,
 			UserId:    th.BasicUser.Id,
 			TeamId:    th.BasicTeam.Id,
@@ -50,8 +50,8 @@ func TestShareProviderDoCommand(t *testing.T) {
 		require.Equal(t, "##### "+args.T("api.command_share.channel_shared"), response.Text)
 
 		channelConvertedMessages := testCluster.SelectMessages(func(msg *model.ClusterMessage) bool {
-			event := model.WebSocketEventFromJson(strings.NewReader(msg.Data))
-			return event != nil && event.EventType() == model.WebsocketEventChannelConverted
+			event, err := model.WebSocketEventFromJSON(bytes.NewReader(msg.Data))
+			return err == nil && event.EventType() == model.WebsocketEventChannelConverted
 		})
 		assert.Len(t, channelConvertedMessages, 1)
 	})
@@ -69,12 +69,12 @@ func TestShareProviderDoCommand(t *testing.T) {
 
 		th.Server.SetRemoteClusterService(mockRemoteCluster)
 		testCluster := &testlib.FakeClusterInterface{}
-		th.Server.Cluster = testCluster
+		th.Server.Platform().SetCluster(testCluster)
 
 		commandProvider := ShareProvider{}
 		channel := th.CreateChannel(th.BasicTeam, WithShared(true))
 		args := &model.CommandArgs{
-			T:         func(s string, args ...interface{}) string { return s },
+			T:         func(s string, args ...any) string { return s },
 			ChannelId: channel.Id,
 			UserId:    th.BasicUser.Id,
 			TeamId:    th.BasicTeam.Id,
@@ -85,8 +85,8 @@ func TestShareProviderDoCommand(t *testing.T) {
 		require.Equal(t, "##### "+args.T("api.command_share.shared_channel_unavailable"), response.Text)
 
 		channelConvertedMessages := testCluster.SelectMessages(func(msg *model.ClusterMessage) bool {
-			event := model.WebSocketEventFromJson(strings.NewReader(msg.Data))
-			return event != nil && event.EventType() == model.WebsocketEventChannelConverted
+			event, err := model.WebSocketEventFromJSON(bytes.NewReader(msg.Data))
+			return err == nil && event.EventType() == model.WebsocketEventChannelConverted
 		})
 		require.Len(t, channelConvertedMessages, 1)
 	})

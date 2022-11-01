@@ -4,8 +4,6 @@
 package model
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -43,30 +41,27 @@ type Command struct {
 	AutocompleteIconData string `db:"-" json:"autocomplete_icon_data,omitempty"`
 }
 
-func (o *Command) ToJson() string {
-	b, _ := json.Marshal(o)
-	return string(b)
-}
-
-func CommandFromJson(data io.Reader) *Command {
-	var o *Command
-	json.NewDecoder(data).Decode(&o)
-	return o
-}
-
-func CommandListToJson(l []*Command) string {
-	b, _ := json.Marshal(l)
-	return string(b)
-}
-
-func CommandListFromJson(data io.Reader) []*Command {
-	var o []*Command
-	json.NewDecoder(data).Decode(&o)
-	return o
+func (o *Command) Auditable() map[string]interface{} {
+	return map[string]interface{}{
+		"id":                 o.Id,
+		"create_at":          o.CreateAt,
+		"update_at":          o.UpdateAt,
+		"delete_at":          o.DeleteAt,
+		"creator_id":         o.CreatorId,
+		"team_id":            o.TeamId,
+		"trigger":            o.Trigger,
+		"username":           o.Username,
+		"icon_url":           o.IconURL,
+		"auto_complete":      o.AutoComplete,
+		"auto_complete_desc": o.AutoCompleteDesc,
+		"auto_complete_hint": o.AutoCompleteHint,
+		"display_name":       o.DisplayName,
+		"description":        o.Description,
+		"url":                o.URL,
+	}
 }
 
 func (o *Command) IsValid() *AppError {
-
 	if !IsValidId(o.Id) {
 		return NewAppError("Command.IsValid", "model.command.is_valid.id.app_error", nil, "", http.StatusBadRequest)
 	}
@@ -109,7 +104,7 @@ func (o *Command) IsValid() *AppError {
 		return NewAppError("Command.IsValid", "model.command.is_valid.url.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if !IsValidHttpUrl(o.URL) {
+	if !IsValidHTTPURL(o.URL) {
 		return NewAppError("Command.IsValid", "model.command.is_valid.url_http.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -127,7 +122,7 @@ func (o *Command) IsValid() *AppError {
 
 	if o.AutocompleteData != nil {
 		if err := o.AutocompleteData.IsValid(); err != nil {
-			return NewAppError("Command.IsValid", "model.command.is_valid.autocomplete_data.app_error", nil, err.Error(), http.StatusBadRequest)
+			return NewAppError("Command.IsValid", "model.command.is_valid.autocomplete_data.app_error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
 	}
 

@@ -4,33 +4,36 @@
 package api4
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/mattermost/mattermost-server/v6/audit"
 	"github.com/mattermost/mattermost-server/v6/model"
+	"github.com/mattermost/mattermost-server/v6/shared/mlog"
 )
 
 func (api *API) InitOAuth() {
-	api.BaseRoutes.OAuthApps.Handle("", api.ApiSessionRequired(createOAuthApp)).Methods("POST")
-	api.BaseRoutes.OAuthApp.Handle("", api.ApiSessionRequired(updateOAuthApp)).Methods("PUT")
-	api.BaseRoutes.OAuthApps.Handle("", api.ApiSessionRequired(getOAuthApps)).Methods("GET")
-	api.BaseRoutes.OAuthApp.Handle("", api.ApiSessionRequired(getOAuthApp)).Methods("GET")
-	api.BaseRoutes.OAuthApp.Handle("/info", api.ApiSessionRequired(getOAuthAppInfo)).Methods("GET")
-	api.BaseRoutes.OAuthApp.Handle("", api.ApiSessionRequired(deleteOAuthApp)).Methods("DELETE")
-	api.BaseRoutes.OAuthApp.Handle("/regen_secret", api.ApiSessionRequired(regenerateOAuthAppSecret)).Methods("POST")
+	api.BaseRoutes.OAuthApps.Handle("", api.APISessionRequired(createOAuthApp)).Methods("POST")
+	api.BaseRoutes.OAuthApp.Handle("", api.APISessionRequired(updateOAuthApp)).Methods("PUT")
+	api.BaseRoutes.OAuthApps.Handle("", api.APISessionRequired(getOAuthApps)).Methods("GET")
+	api.BaseRoutes.OAuthApp.Handle("", api.APISessionRequired(getOAuthApp)).Methods("GET")
+	api.BaseRoutes.OAuthApp.Handle("/info", api.APISessionRequired(getOAuthAppInfo)).Methods("GET")
+	api.BaseRoutes.OAuthApp.Handle("", api.APISessionRequired(deleteOAuthApp)).Methods("DELETE")
+	api.BaseRoutes.OAuthApp.Handle("/regen_secret", api.APISessionRequired(regenerateOAuthAppSecret)).Methods("POST")
 
-	api.BaseRoutes.User.Handle("/oauth/apps/authorized", api.ApiSessionRequired(getAuthorizedOAuthApps)).Methods("GET")
+	api.BaseRoutes.User.Handle("/oauth/apps/authorized", api.APISessionRequired(getAuthorizedOAuthApps)).Methods("GET")
 }
 
 func createOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
-	oauthApp := model.OAuthAppFromJson(r.Body)
-
-	if oauthApp == nil {
-		c.SetInvalidParam("oauth_app")
+	var oauthApp model.OAuthApp
+	if jsonErr := json.NewDecoder(r.Body).Decode(&oauthApp); jsonErr != nil {
+		c.SetInvalidParamWithErr("oauth_app", jsonErr)
 		return
 	}
 
 	auditRec := c.MakeAuditRecord("createOAuthApp", audit.Fail)
+	auditRec.AddEventParameter("oauth_app", oauthApp)
+
 	defer c.LogAuditRec(auditRec)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageOAuth) {
@@ -44,18 +47,21 @@ func createOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	oauthApp.CreatorId = c.AppContext.Session().UserId
 
-	rapp, err := c.App.CreateOAuthApp(oauthApp)
+	rapp, err := c.App.CreateOAuthApp(&oauthApp)
 	if err != nil {
 		c.Err = err
 		return
 	}
 
 	auditRec.Success()
-	auditRec.AddMeta("oauth_app", rapp)
+	auditRec.AddEventResultState(rapp)
+	auditRec.AddEventObjectType("oauth_app")
 	c.LogAudit("client_id=" + rapp.Id)
 
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(rapp.ToJson()))
+	if err := json.NewEncoder(w).Encode(rapp); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func updateOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -66,7 +72,7 @@ func updateOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	auditRec := c.MakeAuditRecord("updateOAuthApp", audit.Fail)
 	defer c.LogAuditRec(auditRec)
-	auditRec.AddMeta("oauth_app_id", c.Params.AppId)
+	auditRec.AddEventParameter("oauth_app_id", c.Params.AppId)
 	c.LogAudit("attempt")
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageOAuth) {
@@ -74,11 +80,12 @@ func updateOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oauthApp := model.OAuthAppFromJson(r.Body)
-	if oauthApp == nil {
-		c.SetInvalidParam("oauth_app")
+	var oauthApp model.OAuthApp
+	if jsonErr := json.NewDecoder(r.Body).Decode(&oauthApp); jsonErr != nil {
+		c.SetInvalidParamWithErr("oauth_app", jsonErr)
 		return
 	}
+	auditRec.AddEventParameter("oauth_app", oauthApp)
 
 	// The app being updated in the payload must be the same one as indicated in the URL.
 	if oauthApp.Id != c.Params.AppId {
@@ -91,7 +98,7 @@ func updateOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = err
 		return
 	}
-	auditRec.AddMeta("oauth_app", oldOAuthApp)
+	auditRec.AddEventPriorState(oldOAuthApp)
 
 	if c.AppContext.Session().UserId != oldOAuthApp.CreatorId && !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageSystemWideOAuth) {
 		c.SetPermissionError(model.PermissionManageSystemWideOAuth)
@@ -102,17 +109,20 @@ func updateOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		oauthApp.IsTrusted = oldOAuthApp.IsTrusted
 	}
 
-	updatedOAuthApp, err := c.App.UpdateOAuthApp(oldOAuthApp, oauthApp)
+	updatedOAuthApp, err := c.App.UpdateOAuthApp(oldOAuthApp, &oauthApp)
 	if err != nil {
 		c.Err = err
 		return
 	}
 
+	auditRec.AddEventResultState(updatedOAuthApp)
+	auditRec.AddEventObjectType("oauth_app")
 	auditRec.Success()
-	auditRec.AddMeta("update", updatedOAuthApp)
 	c.LogAudit("success")
 
-	w.Write([]byte(updatedOAuthApp.ToJson()))
+	if err := json.NewEncoder(w).Encode(updatedOAuthApp); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getOAuthApps(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -122,22 +132,28 @@ func getOAuthApps(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	var apps []*model.OAuthApp
-	var err *model.AppError
+	var appErr *model.AppError
 	if c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageSystemWideOAuth) {
-		apps, err = c.App.GetOAuthApps(c.Params.Page, c.Params.PerPage)
+		apps, appErr = c.App.GetOAuthApps(c.Params.Page, c.Params.PerPage)
 	} else if c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageOAuth) {
-		apps, err = c.App.GetOAuthAppsByCreator(c.AppContext.Session().UserId, c.Params.Page, c.Params.PerPage)
+		apps, appErr = c.App.GetOAuthAppsByCreator(c.AppContext.Session().UserId, c.Params.Page, c.Params.PerPage)
 	} else {
 		c.SetPermissionError(model.PermissionManageOAuth)
 		return
 	}
 
-	if err != nil {
-		c.Err = err
+	if appErr != nil {
+		c.Err = appErr
 		return
 	}
 
-	w.Write([]byte(model.OAuthAppListToJson(apps)))
+	js, err := json.Marshal(apps)
+	if err != nil {
+		c.Err = model.NewAppError("getOAuthApps", "api.marshal_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+
+	w.Write(js)
 }
 
 func getOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -162,7 +178,9 @@ func getOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(oauthApp.ToJson()))
+	if err := json.NewEncoder(w).Encode(oauthApp); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getOAuthAppInfo(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -178,7 +196,9 @@ func getOAuthAppInfo(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	oauthApp.Sanitize()
-	w.Write([]byte(oauthApp.ToJson()))
+	if err := json.NewEncoder(w).Encode(oauthApp); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func deleteOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -189,7 +209,7 @@ func deleteOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	auditRec := c.MakeAuditRecord("deleteOAuthApp", audit.Fail)
 	defer c.LogAuditRec(auditRec)
-	auditRec.AddMeta("oauth_app_id", c.Params.AppId)
+	auditRec.AddEventParameter("oauth_app_id", c.Params.AppId)
 	c.LogAudit("attempt")
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageOAuth) {
@@ -202,7 +222,8 @@ func deleteOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = err
 		return
 	}
-	auditRec.AddMeta("oauth_app", oauthApp)
+	auditRec.AddEventPriorState(oauthApp)
+	auditRec.AddEventObjectType("oauth_app")
 
 	if c.AppContext.Session().UserId != oauthApp.CreatorId && !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageSystemWideOAuth) {
 		c.SetPermissionError(model.PermissionManageSystemWideOAuth)
@@ -229,7 +250,7 @@ func regenerateOAuthAppSecret(c *Context, w http.ResponseWriter, r *http.Request
 
 	auditRec := c.MakeAuditRecord("regenerateOAuthAppSecret", audit.Fail)
 	defer c.LogAuditRec(auditRec)
-	auditRec.AddMeta("oauth_app_id", c.Params.AppId)
+	auditRec.AddEventParameter("oauth_app_id", c.Params.AppId)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageOAuth) {
 		c.SetPermissionError(model.PermissionManageOAuth)
@@ -241,7 +262,8 @@ func regenerateOAuthAppSecret(c *Context, w http.ResponseWriter, r *http.Request
 		c.Err = err
 		return
 	}
-	auditRec.AddMeta("oauth_app", oauthApp)
+	auditRec.AddEventPriorState(oauthApp)
+	auditRec.AddEventObjectType("oauth_app")
 
 	if oauthApp.CreatorId != c.AppContext.Session().UserId && !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionManageSystemWideOAuth) {
 		c.SetPermissionError(model.PermissionManageSystemWideOAuth)
@@ -254,10 +276,13 @@ func regenerateOAuthAppSecret(c *Context, w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	auditRec.AddEventResultState(oauthApp)
 	auditRec.Success()
 	c.LogAudit("success")
 
-	w.Write([]byte(oauthApp.ToJson()))
+	if err := json.NewEncoder(w).Encode(oauthApp); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getAuthorizedOAuthApps(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -271,11 +296,17 @@ func getAuthorizedOAuthApps(c *Context, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	apps, err := c.App.GetAuthorizedAppsForUser(c.Params.UserId, c.Params.Page, c.Params.PerPage)
-	if err != nil {
-		c.Err = err
+	apps, appErr := c.App.GetAuthorizedAppsForUser(c.Params.UserId, c.Params.Page, c.Params.PerPage)
+	if appErr != nil {
+		c.Err = appErr
 		return
 	}
 
-	w.Write([]byte(model.OAuthAppListToJson(apps)))
+	js, err := json.Marshal(apps)
+	if err != nil {
+		c.Err = model.NewAppError("getAuthorizedOAuthApps", "api.marshal_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+
+	w.Write(js)
 }
